@@ -1,0 +1,19 @@
+# Blueprint do Render (opcional). Em "New > Blueprint" o Render lê este arquivo.
+# Os segredos (DATABASE_URL, ACCESS_PASSWORD) NÃO ficam aqui: são preenchidos no painel do Render.
+services:
+  - type: web
+    name: sistema-clientes
+    runtime: python
+    # Plano: escolha conforme o uso. "free" hiberna sem tráfego; "starter" mantém o serviço ativo.
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn run:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --access-logfile -
+    healthCheckPath: /healthz
+    autoDeploy: false          # não publica automaticamente a cada commit
+    envVars:
+      - key: DATABASE_URL      # conexão do Supabase (modo Transaction pooler, porta 6543)
+        sync: false
+      - key: ACCESS_PASSWORD   # senha de acesso ao sistema (obrigatória no Render)
+        sync: false
+      - key: ACCESS_USER
+        value: admin

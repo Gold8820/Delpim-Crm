@@ -1,0 +1,30 @@
+# Segredos e configuração local (nunca versionar)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Bancos de dados e exportações (dados reais de clientes)
+data/
+uploads/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# Planilhas e arquivos de dados
+*.xlsx
+*.xls
+*.csv
+
+# Exceção: fixture sintético usado pelos testes de migração (dados fictícios)
+
+
+# Python / ferramentas
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
