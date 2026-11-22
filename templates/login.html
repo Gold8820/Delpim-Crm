@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Entrar · Inteligência Comercial</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b5bdb'/%3E%3Cpath d='M9 22V10h5a4 4 0 010 8h-5' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ config.get('STATIC_VERSION') or '1' }}">
+</head>
+<body class="login-page">
+  <main class="login-card" aria-labelledby="login-title">
+    <div class="brand login-brand">
+      <span class="brand-mark">IC</span>
+      <span class="brand-text">Inteligência<br>Comercial</span>
+    </div>
+    <h1 id="login-title">Entrar</h1>
+    <p class="muted">Use o e-mail e a senha cadastrados pela empresa.</p>
+    <form id="login-form" novalidate>
+      <label for="email">E-mail</label>
+      <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+      <label for="senha">Senha</label>
+      <input id="senha" name="senha" type="password" autocomplete="current-password" required>
+      <div class="notice login-erro" id="login-erro" role="alert" hidden></div>
+      <button class="btn btn-primary login-botao" id="login-entrar" type="submit">Entrar</button>
+    </form>
+    <p class="help">Não tem acesso? Fale com o administrador do sistema. Não há cadastro aberto.</p>
+  </main>
+  <script>
+    "use strict";
+    (function () {
+      const form = document.getElementById("login-form");
+      const erro = document.getElementById("login-erro");
+      const botao = document.getElementById("login-entrar");
+      // Só aceita destinos dentro do próprio sistema (evita redirecionar para outro site).
+      const pedido = new URLSearchParams(location.search).get("proximo") || "/";
+      const proximo = /^\/(?!\/)/.test(pedido) ? pedido : "/";
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        erro.hidden = true;
+        const email = form.email.value.trim(), senha = form.senha.value;
+        if (!email || !senha) { erro.textContent = "Informe e-mail e senha."; erro.hidden = false; return; }
+        botao.disabled = true; botao.textContent = "Entrando…";
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+            body: JSON.stringify({ email, senha }),
+          });
+          if (res.ok) { location.replace(proximo); return; }
+          const corpo = await res.json().catch(() => ({}));
+          erro.textContent = corpo.erro || "Não foi possível entrar. Tente novamente.";
+        } catch {
+          erro.textContent = "Não foi possível conectar ao servidor. Verifique sua conexão.";
+        }
+        erro.hidden = false;
+        form.senha.value = "";
+        botao.disabled = false; botao.textContent = "Entrar";
+      });
+    })();
+  </script>
+</body>
+</html>

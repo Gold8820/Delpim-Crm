@@ -33,6 +33,11 @@ async function api(url, options = {}) {
   } catch {
     throw Object.assign(new Error("Não foi possível conectar ao servidor. Verifique se o sistema está em execução."), { fields: {} });
   }
+  if (res.status === 401) {   // sessão expirada ou encerrada: volta para a tela de login
+    const destino = location.pathname + location.search + location.hash;
+    location.replace(`/login?proximo=${encodeURIComponent(destino)}`);
+    throw Object.assign(new Error("Sessão expirada. Entre novamente."), { fields: {}, status: 401 });
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw Object.assign(new Error(body.erro || "Ocorreu um erro inesperado."), { fields: body.campos || {}, status: res.status });
@@ -1206,7 +1211,23 @@ async function salvarCurva() {
 /* ========================================================================
    Início
    ======================================================================== */
+/* Usuário logado (Supabase Auth) e botão Sair. Sem login configurado (uso local), a área fica oculta. */
+async function wireSession() {
+  try {
+    const s = await api("/api/auth/sessao");
+    if (!s.login || !s.email) return;
+    $("#usuario-email").textContent = s.email;
+    $("#sidebar-user").hidden = false;
+    $("#btn-sair").onclick = async () => {
+      $("#btn-sair").disabled = true;
+      try { await api("/api/auth/logout", { method: "POST" }); } catch { /* sai mesmo assim */ }
+      location.replace("/login");
+    };
+  } catch { /* 401 já redireciona para o login */ }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+  wireSession();
   wireMain();
   wireClientForm();
   wireDelete();

@@ -22,6 +22,14 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 8 — login com Supabase Auth (sem Cloudflare Access) — 277 testes passando
+- **Motivo:** o usuário não quer Cloudflare Zero Trust/Access (exige cartão). Removidos `clientes/acesso.py`, `tests/acesso_helper.py`, `CF_ACCESS_*` e o bloqueio 503.
+- **Login:** `clientes/autenticacao.py` + `templates/login.html`. Backend chama o Supabase Auth (`/auth/v1/token?grant_type=password|refresh_token`, `/auth/v1/logout`) com a chave publicável; cookies `sc_sessao`/`sc_renovacao` (HttpOnly, Secure, SameSite=Lax). JWT ES256 validado em Python puro (P-256; conferido contra a biblioteca cryptography nos testes), JWKS do projeto com cache de 1 h, tokens validados em cache por instância. Autorização: e-mail ativo em `usuarios_autorizados` (cache 60 s). Verificação de `Origin` em POST/PUT/DELETE. Limite simples de 8 senhas erradas/10 min por e-mail (por instância).
+- **Banco:** tabela `usuarios_autorizados` (aplicada em produção em 22/11/2026, só adição): RLS, `app_clientes` só SELECT, anon/authenticated sem acesso. Conferido: nenhuma tabela legível/gravável por `authenticated` pela API REST.
+- **Publicado:** só o Worker de validação (`sistema-clientes-dev`), com `SUPABASE_URL` e a chave publicável em `wrangler.jsonc`. Produção (`sistema-clientes`) intocada.
+- **Pendente (usuário):** desativar *Allow new users to sign up* no Supabase (está ativo), criar usuários (Auth > Users > Add user, Auto Confirm) e autorizá-los em `usuarios_autorizados`. Ainda não há nenhum usuário no Auth (login real com sucesso não testado em produção; testado com Supabase Auth simulado e, no real, o caminho de senha errada).
+
+
 ### Rodada 7 — sem login próprio (Cloudflare Access) + importação lida no navegador em lotes — 259 testes passando
 - **Branch:** `dev/access-importacao-navegador` (a versão publicada em produção está no commit `05e92e1`, branch `cloudflare-workers`).
 - **Acesso:** removidos o HTTP Basic, `ACCESS_PASSWORD`/`ACCESS_USER` e toda validação interna de usuário e senha. `clientes/acesso.py` confere o token do Cloudflare Access (RS256, `aud`, `iss`, `exp`/`nbf`; chaves em `https://<time>/cdn-cgi/access/certs`, cache de 1 h). `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` obrigatórias no Cloudflare e no Render (503 sem elas; 403 sem token válido). Local sem as variáveis: abre direto. `/healthz` aberto.

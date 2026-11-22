@@ -16,8 +16,7 @@
     { "type": "Data", "globs": ["templates/**/*.html"], "fallthrough": false }
   ],
   // Workers Static Assets: CSS e JS (copiados de static/ pelo build) respondidos direto em /static/*,
-  // sem passar pelo Python (economiza CPU). Todo o resto passa pelo Worker. O endereço inteiro, inclusive
-  // /static/*, fica atrás do Cloudflare Access (login com e-mail da empresa).
+  // sem passar pelo Python (economiza CPU). Não contêm dados; páginas e APIs exigem login.
   "assets": {
     "directory": "./build/public",
     "binding": "ASSETS",
@@ -29,24 +28,22 @@
   "hyperdrive": [
     { "binding": "HYPERDRIVE", "id": "2a377c09a7ae4baaad3f27307f560f31" }
   ],
-  // Cloudflare Access (login com e-mail da empresa, fora da aplicação). Não são segredos.
-  // Preencha com os dados da aplicação do Access (Zero Trust > Access > Applications):
-  //   CF_ACCESS_TEAM_DOMAIN = <time>.cloudflareaccess.com   CF_ACCESS_AUD = Application Audience (AUD) Tag
-  // Vazios, o Worker não serve nada (503): nunca fica aberto por engano.
-  "vars": { "CF_ACCESS_TEAM_DOMAIN": "", "CF_ACCESS_AUD": "" },
+  // Login com Supabase Auth (e-mail e senha), validado no backend. NÃO são segredos: o endereço do projeto e a
+  // chave PUBLICÁVEL (sb_publishable_...). A chave service_role nunca é usada nem guardada no Worker.
+  "vars": { "SUPABASE_URL": "https://qbsaiaqmhglotnhvrnqd.supabase.co", "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_ZWfjEGYSZVy_qGGgUDBDxQ_VPk6ldFD" },
   // Roda o Worker perto do banco (Supabase em AWS us-east-2): cada requisição faz várias consultas,
   // e assim cada ida e volta ao banco leva poucos milissegundos em vez de ~150 ms.
   "placement": { "region": "aws:us-east-2" },
   "observability": { "enabled": true },
-  // Ambiente de validação: outro Worker (sistema-clientes-dev.<conta>.workers.dev), com a sua própria
-  // aplicação do Cloudflare Access. Publicado com `--env dev`; a produção (sistema-clientes) não muda.
+  // Ambiente de validação: outro Worker (sistema-clientes-dev.<conta>.workers.dev), mesmo banco e mesmo login.
+  // Publicado com `--env dev`; a produção (sistema-clientes) não muda.
   "env": {
     "dev": {
       "name": "sistema-clientes-dev",
       "hyperdrive": [
         { "binding": "HYPERDRIVE", "id": "2a377c09a7ae4baaad3f27307f560f31" }
       ],
-      "vars": { "CF_ACCESS_TEAM_DOMAIN": "", "CF_ACCESS_AUD": "" }
+      "vars": { "SUPABASE_URL": "https://qbsaiaqmhglotnhvrnqd.supabase.co", "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_ZWfjEGYSZVy_qGGgUDBDxQ_VPk6ldFD" }
     }
   }
 }

@@ -8,15 +8,16 @@ banco de TESTE.
     python scripts/verificar_worker.py http://127.0.0.1:8787
     python scripts/verificar_worker.py https://sistema-clientes.<conta>.workers.dev --exige-bloqueio
 
-Não há usuário e senha no sistema. Para passar pelo Cloudflare Access em produção, use um Service Token
-do Access (Zero Trust > Access > Service Auth), nas variáveis CF_ACCESS_CLIENT_ID e CF_ACCESS_CLIENT_SECRET,
-incluído na política da aplicação. A importação usa o mesmo caminho do navegador (linhas em lotes).
+Login: Supabase Auth. Informe um usuário AUTORIZADO nas variáveis VERIFICAR_EMAIL e VERIFICAR_SENHA
+(sem elas, só são conferidos o bloqueio sem login e o /healthz). A importação usa o mesmo caminho do
+navegador (linhas em lotes).
 
 Saída: uma linha por verificação (OK/FALHOU) e o tempo de cada chamada.
 """
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import io
 import json
 import os
@@ -43,16 +44,22 @@ def xlsx(rows) -> bytes:
     return buf.getvalue()
 
 
+class _SemRedirecionar(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 class Cliente:
-    def __init__(self, base, acesso: dict | None = None):
+    def __init__(self, base):
         self.base = base.rstrip("/")
-        self.acesso = acesso or {}          # cabeçalhos do Service Token do Cloudflare Access (se houver)
+        self.cookies = http.cookiejar.CookieJar()     # sessão (cookies HttpOnly do login)
+        self.abrir = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies),
+                                                 _SemRedirecionar()).open
+        self.sem_sessao = urllib.request.build_opener(_SemRedirecionar()).open
         self.tempos = []
 
     def chamar(self, metodo, caminho, corpo=None, auth=True, tipo=None, bruto=False):
         headers = {"User-Agent": "sistema-clientes-verificacao/1.0"}   # sem isso o Cloudflare responde 1010
-        if auth:
-            headers.update(self.acesso)
         data = None
         if corpo is not None and tipo is None:
             data = json.dumps(corpo).encode()
@@ -62,7 +69,7 @@ class Cliente:
         req = urllib.request.Request(self.base + caminho, data=data, method=metodo, headers=headers)
         inicio = time.perf_counter()
         try:
-            with urllib.request.urlopen(req, timeout=120) as res:
+            with (self.abrir if auth else self.sem_sessao)(req, timeout=120) as res:
                 status, conteudo, ctype = res.status, res.read(), res.headers.get("Content-Type", "")
         except urllib.error.HTTPError as exc:
             status, conteudo, ctype = exc.code, exc.read(), exc.headers.get("Content-Type", "")
@@ -96,17 +103,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("url")
     ap.add_argument("--completo", action="store_true", help="também altera e restaura a Curva ABC (só em banco de teste)")
-    ap.add_argument("--exige-bloqueio", action="store_true",
-                    help="confere que, sem o Service Token, nada é servido (Cloudflare Access ativo)")
+    ap.add_argument("--exige-bloqueio", action="store_true", help="confere que, sem login, páginas e APIs são bloqueadas")
     args = ap.parse_args()
-    acesso = {}
-    if os.environ.get("CF_ACCESS_CLIENT_ID") and os.environ.get("CF_ACCESS_CLIENT_SECRET"):
-        acesso = {"CF-Access-Client-Id": os.environ["CF_ACCESS_CLIENT_ID"],
-                  "CF-Access-Client-Secret": os.environ["CF_ACCESS_CLIENT_SECRET"]}
-    elif os.environ.get("CF_ACCESS_TOKEN"):
-        acesso = {"Cf-Access-Jwt-Assertion": os.environ["CF_ACCESS_TOKEN"]}
-
-    c = Cliente(args.url, acesso)
+    c = Cliente(args.url)
     falhas = []
 
     def ok(nome, condicao, detalhe=""):
@@ -118,12 +117,26 @@ def main() -> int:
     criados = []
     try:
         if args.exige_bloqueio:
-            for rota in ("/", "/api/clientes", "/static/app.js", "/healthz"):
+            for rota, esperado in (("/", 302), ("/api/clientes", 401), ("/api/meta", 401)):
                 s, _ = c.chamar("GET", rota, auth=False, bruto=True)
-                ok(f"sem passar pelo Access, {rota} é bloqueado", s in (302, 401, 403), s)
+                ok(f"sem login, {rota} é bloqueado ({esperado})", s == esperado, s)
+            s, pagina = c.chamar("GET", "/login", auth=False, bruto=True)
+            ok("tela de login abre e não expõe chaves", s == 200 and b"login-form" in pagina
+               and b"sb_publishable" not in pagina and b"service_role" not in pagina, s)
+            s, r = c.chamar("POST", "/api/auth/login", {"email": "ninguem@exemplo.com", "senha": "errada-123"}, auth=False)
+            ok("login com senha errada é recusado", s in (401, 429), f"{s} {r}")
+        email, senha = os.environ.get("VERIFICAR_EMAIL"), os.environ.get("VERIFICAR_SENHA")
+        if not (email and senha):
+            print("AVISO   VERIFICAR_EMAIL/VERIFICAR_SENHA não informados: verificações com login puladas.")
+            s, b = c.chamar("GET", "/healthz")
+            ok("healthz responde ok (Hyperdrive + Supabase)", s == 200 and b == {"status": "ok"}, f"{s} {b}")
+            return 1 if falhas else 0
+        s, r = c.chamar("POST", "/api/auth/login", {"email": email, "senha": senha})
+        ok("login pelo Supabase Auth (usuário autorizado)", s == 200, f"{s} {r}")
         s, pagina = c.chamar("GET", "/", bruto=True)
-        ok("página principal abre direto (sem tela de login)",
-           s == 200 and b"<html" in pagina.lower() and b"planilhas.js" in pagina, s)
+        ok("depois do login, a tela de clientes abre", s == 200 and b"planilhas.js" in pagina, s)
+        s, r = c.chamar("GET", "/api/auth/sessao")
+        ok("sessão mostra o usuário", s == 200 and (r or {}).get("email") == email.lower(), f"{s} {r}")
         s, b = c.chamar("GET", "/healthz")
         ok("healthz responde ok", s == 200 and b == {"status": "ok"}, f"{s} {b}")
         for arq, marca in (("style.css", b"{"), ("app.js", b"function")):
@@ -218,6 +231,10 @@ def main() -> int:
         for cid in criados:
             s, _ = c.chamar("DELETE", f"/api/clientes/{cid}")
             ok(f"limpeza: cliente de teste {cid} excluído", s == 200, s)
+        if os.environ.get("VERIFICAR_EMAIL"):
+            s, _ = c.chamar("POST", "/api/auth/logout")
+            s2, _ = c.chamar("GET", "/api/clientes")
+            ok("sair encerra a sessão (API volta a responder 401)", s == 200 and s2 == 401, f"{s} {s2}")
 
     print("\nTempos (ms, incluindo rede):")
     for nome, status, ms in c.tempos:

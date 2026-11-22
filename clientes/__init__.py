@@ -2,15 +2,15 @@
 
 Configuração por variáveis de ambiente (ver .env.example):
   DATABASE_URL           conexão do PostgreSQL (Supabase). Obrigatória no ambiente local.
-  CF_ACCESS_TEAM_DOMAIN  domínio do time do Cloudflare Access (ex.: empresa.cloudflareaccess.com).
-  CF_ACCESS_AUD          Application Audience (AUD) da aplicação do Access.
+  SUPABASE_URL              endereço do projeto Supabase (ex.: https://<ref>.supabase.co).
+  SUPABASE_PUBLISHABLE_KEY  chave publicável do projeto (não é segredo; a service_role NUNCA é usada).
 
-Não há login próprio (usuário/senha): o acesso é controlado pelo Cloudflare Access, na frente do Worker,
-e a aplicação confere o token do Access em cada requisição (ver clientes/acesso.py).
+Login com Supabase Auth (e-mail e senha), validado no backend; só entra quem está ativo na tabela
+usuarios_autorizados (ver clientes/autenticacao.py).
 
 No Cloudflare Workers (src/worker.py, `create_app(cloudflare=True)`):
   - o banco vem do binding HYPERDRIVE, a cada requisição (ver clientes/db.py);
-  - CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD vêm das variáveis do Worker e são obrigatórias (falha fechada);
+  - SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY vêm das variáveis do Worker; o login é obrigatório;
   - o esquema do banco não é alterado ao iniciar (migrações: scripts/migrar_schema.py);
   - CSS e JS vêm do Workers Static Assets (ver clientes/cloudflare.py).
 """
@@ -21,7 +21,7 @@ import os
 from flask import Flask, jsonify
 
 from . import db as dbmod
-from .acesso import exige_access_no_render, exigir_acesso
+from .autenticacao import exige_login_no_render, exigir_login, renovar_cookies
 from .db import close_db, get_db, init_db
 
 
@@ -31,7 +31,7 @@ def create_app(database_url: str | None = None, schema: str | None = None, *, cl
     `schema` é usado apenas pelos testes, para isolar cada teste em um schema próprio.
     `cloudflare=True` é usado só por src/worker.py (ver a descrição do módulo).
     """
-    exige_access_no_render()
+    exige_login_no_render()
     url = database_url or os.environ.get("DATABASE_URL")
     if not url and not cloudflare:
         raise RuntimeError("Defina a variável de ambiente DATABASE_URL com a conexão do PostgreSQL "
@@ -42,9 +42,9 @@ def create_app(database_url: str | None = None, schema: str | None = None, *, cl
     app.config.update(
         DATABASE_URL=None if cloudflare else url,
         DB_SCHEMA=schema,
-        CF_ACCESS_TEAM_DOMAIN=os.environ.get("CF_ACCESS_TEAM_DOMAIN") or None,
-        CF_ACCESS_AUD=os.environ.get("CF_ACCESS_AUD") or None,
-        ACESSO_OBRIGATORIO=cloudflare or bool(os.environ.get("RENDER")),
+        SUPABASE_URL=os.environ.get("SUPABASE_URL") or None,
+        SUPABASE_PUBLISHABLE_KEY=os.environ.get("SUPABASE_PUBLISHABLE_KEY") or None,
+        LOGIN_OBRIGATORIO=cloudflare or bool(os.environ.get("RENDER")),
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
         JSON_AS_ASCII=False,
         CLOUDFLARE=cloudflare,
@@ -54,7 +54,8 @@ def create_app(database_url: str | None = None, schema: str | None = None, *, cl
         init_db(url, schema)
     app.teardown_appcontext(close_db)
 
-    app.before_request(exigir_acesso)
+    app.before_request(exigir_login)
+    app.after_request(renovar_cookies)
 
     @app.get("/healthz")
     def healthz():
@@ -65,7 +66,9 @@ def create_app(database_url: str | None = None, schema: str | None = None, *, cl
             return jsonify({"status": "indisponivel"}), 503
         return jsonify({"status": "ok"})
 
+    from .autenticacao import bp as bp_auth
     from .routes import bp
+    app.register_blueprint(bp_auth)
     app.register_blueprint(bp)
 
     if cloudflare:

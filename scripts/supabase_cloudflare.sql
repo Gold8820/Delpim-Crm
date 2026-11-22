@@ -66,7 +66,30 @@ BEGIN
     END LOOP;
 END $$;
 
--- 5) Conferência: RLS ligado, política presente, nenhum privilégio para anon/authenticated.
+-- 5) Login (Supabase Auth): lista de usuários autorizados pela empresa.
+--    O login é validado no backend do Worker; o JWT do usuário NÃO chega ao PostgreSQL (o Worker conecta
+--    pelo Hyperdrive como app_clientes), por isso o controle é feito na aplicação + nesta lista.
+--    A aplicação só LÊ a lista (SELECT). Quem cadastra/desativa é o administrador, no SQL Editor:
+--      INSERT INTO public.usuarios_autorizados (email, nome) VALUES ('pessoa@empresa.com.br', 'Nome');
+--      UPDATE public.usuarios_autorizados SET ativo = false WHERE email = 'pessoa@empresa.com.br';
+CREATE TABLE IF NOT EXISTS public.usuarios_autorizados (
+    email TEXT PRIMARY KEY CHECK (email = lower(btrim(email)) AND email LIKE '%_@_%'),
+    nome TEXT,
+    ativo BOOLEAN NOT NULL DEFAULT true,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.usuarios_autorizados ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.usuarios_autorizados FROM anon, authenticated, app_clientes;
+GRANT SELECT ON public.usuarios_autorizados TO app_clientes;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'usuarios_autorizados'
+                   AND policyname = 'app_clientes_leitura') THEN
+        CREATE POLICY app_clientes_leitura ON public.usuarios_autorizados FOR SELECT TO app_clientes USING (true);
+    END IF;
+END $$;
+
+-- 6) Conferência: RLS ligado, política presente, nenhum privilégio para anon/authenticated.
 SELECT c.relname AS tabela,
        c.relrowsecurity AS rls_ativo,
        EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname

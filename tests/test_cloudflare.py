@@ -21,14 +21,14 @@ from urllib.parse import urlsplit
 import psycopg
 import pytest
 
-import acesso_helper as ah
-from clientes import acesso, create_app
+import supabase_helper as sh
+from clientes import autenticacao as auth, create_app
 from clientes.db import DriverError, init_db
 
 from test_duas_planilhas import CNPJ_A, CNPJ_B, clientes_xlsx, contratos_xlsx
 
 ROOT = Path(__file__).resolve().parent.parent
-TOKEN = ah.cabecalho()["Cf-Access-Jwt-Assertion"]
+USUARIO = "vendas@delpim.com.br"
 
 
 # ============================================================================ ambiente simulado
@@ -45,6 +45,7 @@ def banco_worker(pg_url):
         conn.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}")
         conn.execute(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {schema} TO {role}")
         conn.execute(f"ALTER ROLE {role} SET search_path = {schema}, public, extensions")
+        conn.execute(f"INSERT INTO {schema}.usuarios_autorizados (email) VALUES ('{USUARIO}')")
     parts = urlsplit(pg_url)
     binding = SimpleNamespace(host=parts.hostname, port=str(parts.port or 5432), user=role,
                               password="app-teste", database=(parts.path or "/postgres").lstrip("/"),
@@ -58,7 +59,7 @@ def banco_worker(pg_url):
 
 
 def _worker_env(banco, **extra):
-    values = {"HYPERDRIVE": banco.binding, "CF_ACCESS_TEAM_DOMAIN": ah.TIME, "CF_ACCESS_AUD": ah.AUD}
+    values = {"HYPERDRIVE": banco.binding, "SUPABASE_URL": sh.URL, "SUPABASE_PUBLISHABLE_KEY": sh.CHAVE_PUBLICAVEL}
     values.update(extra)
     return SimpleNamespace(**values)
 
@@ -67,18 +68,20 @@ def _worker_env(banco, **extra):
 def cf_app(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("RENDER", raising=False)
-    acesso._chaves.update(time=None, lidas_em=0.0, chaves={})
+    sh.limpar_caches()
+    monkeypatch.setattr(auth, "_http", sh.SupabaseFalso({USUARIO: "senha-de-teste-123"}))
     app = create_app(cloudflare=True)
-    app.config["CF_ACCESS_JWKS"] = ah.jwks()   # chaves públicas do Access (nos testes, sem rede)
+    app.config["SUPABASE_JWKS"] = sh.jwks()   # chaves públicas do Supabase (nos testes, sem rede)
     return app
 
 
 @pytest.fixture()
 def worker(cf_app, banco_worker):
-    """Cliente HTTP do Worker simulado, como um usuário que já passou pelo Cloudflare Access."""
+    """Cliente HTTP do Worker simulado, já com sessão de um usuário autorizado (login pelo Supabase Auth)."""
     c = cf_app.test_client()
     c.environ_base["workers.env"] = _worker_env(banco_worker)
-    c.environ_base["HTTP_CF_ACCESS_JWT_ASSERTION"] = TOKEN
+    res = c.post("/api/auth/login", json={"email": USUARIO, "senha": "senha-de-teste-123"})
+    assert res.status_code == 200, res.json
     return c
 
 
@@ -131,7 +134,7 @@ def test_wrangler_configura_python_workers_hyperdrive_e_estaticos():
     assert "python_workers" in cfg["compatibility_flags"]
     assert date.fromisoformat(cfg["compatibility_date"]) >= date(2026, 9, 8)   # Hyperdrive no Python Workers
     assert [h["binding"] for h in cfg["hyperdrive"]] == ["HYPERDRIVE"]
-    # CSS/JS servidos direto pelo Static Assets (sem CPU do Python); o Cloudflare Access protege o endereço todo.
+    # CSS/JS servidos direto pelo Static Assets (sem CPU do Python); não têm dados. Páginas e APIs exigem login.
     assert cfg["assets"]["directory"] == "./build/public" and cfg["assets"]["binding"] == "ASSETS"
     assert cfg["assets"]["run_worker_first"] == ["/*", "!/static/*"]
     assert [g for r in cfg["rules"] for g in r["globs"]] == ["templates/**/*.html"]
@@ -147,10 +150,13 @@ def test_build_copia_somente_o_codigo_do_sistema():
 
 def test_wrangler_nao_tem_segredos():
     cfg = _wrangler()
-    assert set(cfg.get("vars", {})) <= {"CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD"}
+    assert set(cfg.get("vars", {})) <= {"SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY"}
     texto = (CF / "wrangler.jsonc").read_text(encoding="utf-8")
     assert "postgres://" not in texto and "postgresql://" not in texto
-    assert "ACCESS_PASSWORD" not in texto and "ACCESS_USER" not in texto   # sem login próprio
+    valores = json.dumps(cfg)                                            # configuração, sem os comentários
+    assert "service_role" not in valores and "sb_secret_" not in valores  # nenhuma chave secreta do Supabase
+    assert "ACCESS_PASSWORD" not in texto and "CF_ACCESS" not in texto
+    assert cfg["vars"]["SUPABASE_PUBLISHABLE_KEY"].startswith("sb_publishable_")
 
 
 def test_dependencias_do_worker_sao_compativeis_com_pyodide():
@@ -162,42 +168,56 @@ def test_dependencias_do_worker_sao_compativeis_com_pyodide():
     assert not any("psycopg" in d for d in deps)
 
 
-# ============================================================================ acesso (Cloudflare Access)
+# ============================================================================ login (Supabase Auth)
 
-def test_sem_access_configurado_no_worker_nada_e_servido(cf_app, banco_worker):
-    c = cf_app.test_client()
-    c.environ_base["workers.env"] = _worker_env(banco_worker, CF_ACCESS_TEAM_DOMAIN=None, CF_ACCESS_AUD=None)
-    for rota in ("/", "/api/clientes", "/api/meta"):
-        assert c.get(rota, headers=ah.cabecalho()).status_code == 503, rota
-
-
-@pytest.mark.parametrize("rota,metodo", [("/", "get"), ("/api/clientes", "get"), ("/api/meta", "get"),
+@pytest.mark.parametrize("rota,metodo", [("/api/clientes", "get"), ("/api/meta", "get"),
                                          ("/api/clientes", "post"), ("/api/importacao/lote", "post"),
                                          ("/api/importacao/arquivo", "post"), ("/api/importacao/previa", "post"),
                                          ("/api/importacao/confirmar", "post"), ("/api/configuracoes/curva-abc", "put")])
-def test_sem_passar_pelo_access_todas_as_rotas_sao_bloqueadas(cf_app, banco_worker, rota, metodo):
+def test_sem_sessao_todas_as_apis_sao_bloqueadas(cf_app, banco_worker, rota, metodo):
     c = cf_app.test_client()
     c.environ_base["workers.env"] = _worker_env(banco_worker)
-    res = getattr(c, metodo)(rota)
-    assert res.status_code == 403 and "WWW-Authenticate" not in res.headers
-    assert getattr(c, metodo)(rota, headers=ah.cabecalho(ah.token(chave=ah.OUTRA_CHAVE))).status_code == 403
-    assert getattr(c, metodo)(rota, headers=ah.cabecalho(ah.token(aud=["outra"]))).status_code == 403
+    assert getattr(c, metodo)(rota).status_code == 401
+    c.set_cookie(auth.COOKIE_ACESSO, sh.token(USUARIO, chave=sh.OUTRA))     # token forjado
+    assert getattr(c, metodo)(rota).status_code == 401
 
 
-def test_usuario_autorizado_vai_direto_para_a_tela_de_clientes(worker):
-    pagina = worker.get("/")
-    assert pagina.status_code == 200 and b"<html" in pagina.data.lower()
-    assert "WWW-Authenticate" not in pagina.headers
-    assert b"/static/style.css?v=cf" in pagina.data and b"/static/app.js?v=cf" in pagina.data
-    assert b"/static/planilhas.js?v=cf" in pagina.data   # leitura de planilhas no navegador
-
-
-def test_dominio_e_aud_vem_das_variaveis_do_worker(cf_app, banco_worker):
+def test_sem_sessao_a_pagina_vai_para_o_login(cf_app, banco_worker):
     c = cf_app.test_client()
-    c.environ_base["workers.env"] = _worker_env(banco_worker, CF_ACCESS_AUD="outra-aplicacao")
-    assert c.get("/api/clientes", headers=ah.cabecalho()).status_code == 403
-    c.environ_base["workers.env"] = _worker_env(banco_worker, CF_ACCESS_TEAM_DOMAIN="https://" + ah.TIME + "/")
-    assert c.get("/api/clientes", headers=ah.cabecalho()).status_code == 200
+    c.environ_base["workers.env"] = _worker_env(banco_worker)
+    res = c.get("/")
+    assert res.status_code == 302 and res.headers["Location"].startswith("/login")
+    assert c.get("/login").status_code == 200
+
+
+def test_login_no_worker_e_cookie_seguro(cf_app, banco_worker):
+    c = cf_app.test_client()
+    c.environ_base["workers.env"] = _worker_env(banco_worker)
+    res = c.post("/api/auth/login", json={"email": USUARIO, "senha": "senha-de-teste-123"})
+    assert res.status_code == 200
+    cookie = next(x for x in res.headers.getlist("Set-Cookie") if x.startswith(auth.COOKIE_ACESSO + "="))
+    assert "Secure" in cookie and "HttpOnly" in cookie and "SameSite=Lax" in cookie
+    pagina = c.get("/")
+    assert pagina.status_code == 200 and b"/static/planilhas.js?v=cf" in pagina.data
+    assert b"sb_publishable" not in pagina.data   # a chave fica no servidor
+
+
+def test_sem_configuracao_do_supabase_ninguem_entra(cf_app, banco_worker):
+    c = cf_app.test_client()
+    c.environ_base["workers.env"] = _worker_env(banco_worker, SUPABASE_URL=None, SUPABASE_PUBLISHABLE_KEY=None)
+    assert c.post("/api/auth/login", json={"email": USUARIO, "senha": "x"}).status_code == 503
+    assert c.get("/api/clientes").status_code == 401
+    assert c.get("/").status_code == 302
+
+
+def test_autorizacao_lida_pelo_usuario_restrito_do_banco(cf_app, banco_worker):
+    """A tabela usuarios_autorizados é lida com o usuário de privilégio mínimo (via Hyperdrive)."""
+    c = cf_app.test_client()
+    c.environ_base["workers.env"] = _worker_env(banco_worker)
+    c.set_cookie(auth.COOKIE_ACESSO, sh.token("outra.pessoa@delpim.com.br"))
+    assert c.get("/api/clientes").status_code == 401
+    c.set_cookie(auth.COOKIE_ACESSO, sh.token(USUARIO))
+    assert c.get("/api/clientes").status_code == 200
 
 
 def test_healthz_aberto_e_sem_dados(cf_app, banco_worker):
@@ -205,16 +225,6 @@ def test_healthz_aberto_e_sem_dados(cf_app, banco_worker):
     c.environ_base["workers.env"] = _worker_env(banco_worker)
     res = c.get("/healthz")
     assert res.status_code == 200 and res.json == {"status": "ok"}
-
-
-def test_estaticos_pela_rota_do_flask_continuam_disponiveis(cf_app, banco_worker, monkeypatch):
-    """Normalmente o Static Assets responde /static/* antes do Python; a rota fica como reserva."""
-    monkeypatch.setattr("clientes.cloudflare._fetch_asset", lambda nome: (200, b"body{}", "text/css"))
-    c = cf_app.test_client()
-    c.environ_base["workers.env"] = _worker_env(banco_worker)
-    assert c.get("/static/style.css").status_code == 403
-    res = c.get("/static/style.css", headers=ah.cabecalho())
-    assert res.status_code == 200 and res.data == b"body{}"
 
 
 # ============================================================================ banco via Hyperdrive

@@ -23,7 +23,7 @@ O sistema cria as tabelas automaticamente na primeira execução (é seguro repe
 A extensão `unaccent` é usada na ordenação e na busca por nome; no Supabase ela já vem disponível (o sistema tenta criá-la; se não tiver permissão, peça ao administrador do banco para executar `CREATE EXTENSION IF NOT EXISTS unaccent;`).
 
 - Para acessar de outros computadores da rede: `CLIENTES_HOST=0.0.0.0 python run.py`.
-- Não há login próprio (usuário e senha). Na nuvem, o acesso é controlado pelo **Cloudflare Access** (e-mails autorizados da empresa). Localmente, o sistema abre direto, para uso em rede interna; para exigir o Access também aqui, defina `CF_ACCESS_TEAM_DOMAIN` e `CF_ACCESS_AUD`.
+- Login com **Supabase Auth** (e-mail e senha), só para usuários cadastrados e autorizados pela empresa (veja *Usuários e login*). Localmente, sem `SUPABASE_URL`, o sistema abre direto (rede interna); com `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`, exige login também.
 - Porta: `CLIENTES_PORT=8080`.
 - Os dados ficam no PostgreSQL indicado em `DATABASE_URL`. Faça backup pelo painel do Supabase
   (ou `pg_dump`). Os arquivos enviados para importação ficam guardados no próprio banco (tabela `arquivos_importacao`) e são apagados após 24 horas. Nada é gravado no disco do servidor.
@@ -41,8 +41,8 @@ O `python run.py` continua funcionando como antes.
 | Configuração do Cloudflare | `cloudflare/wrangler.jsonc` (Worker `sistema-clientes`, Hyperdrive, Static Assets, variáveis) |
 | Dependências do Worker | `cloudflare/pyproject.toml`: Flask, openpyxl, defusedxml, pg8000 (todas em Python puro) |
 | Montagem do pacote | `cloudflare/build.mjs` (roda sozinho no `dev`/`deploy`; copia só `src/worker.py`, `clientes/`, `templates/`) |
-| Configuração assistida | `cloudflare/configurar.py` (senha do banco, Hyperdrive, Access, pacotes, deploy de validação e de produção) |
-| Acesso | `clientes/acesso.py` (confere o token do Cloudflare Access) |
+| Configuração assistida | `cloudflare/configurar.py` (senha do banco, Hyperdrive, pacotes, deploy de validação e de produção, verificação) |
+| Login | `clientes/autenticacao.py` (Supabase Auth, JWT ES256, usuários autorizados) e `templates/login.html` |
 | Leitura de planilhas no navegador | `static/planilhas.js` (envio em lotes para `/api/importacao/lote`) |
 | Banco (permissões e RLS) | `scripts/supabase_cloudflare.sql` · migração de esquema: `scripts/migrar_schema.py` |
 | Verificação ponta a ponta | `scripts/verificar_worker.py <url>` (dados fictícios, apaga o que cria) |
@@ -61,13 +61,19 @@ de gravar; com cache, a tela mostraria dados antigos).
 Alterações de esquema rodam à parte (`scripts/migrar_schema.py`, usuário `postgres`). RLS ligado em todas as tabelas,
 com uma única política (para `app_clientes`); `anon`/`authenticated` sem acesso.
 
-**Acesso (Cloudflare Access, sem login próprio):** o sistema não tem tela nem prompt de usuário e senha. O
-Cloudflare Access fica na frente do Worker (endereço inteiro, inclusive `/static/*`) e só deixa passar os e-mails
-autorizados na política. Quem passa vai direto para a tela de clientes. A aplicação ainda confere, em cada requisição,
-o token assinado do Access (`Cf-Access-Jwt-Assertion`: assinatura RS256 com as chaves do time, `aud`, emissor e
-validade), com as variáveis `CF_ACCESS_TEAM_DOMAIN` e `CF_ACCESS_AUD`. Sem essas variáveis o Worker responde 503;
-sem token válido, 403. Assim o sistema nunca fica aberto, mesmo se o Access for desligado por engano.
-Só `/healthz` responde sem token (`{"status": "ok"}`, sem dados).
+**Login (Supabase Auth):** tela de login própria (`/login`). O navegador envia e-mail e senha ao backend, que
+pede a sessão ao Supabase Auth com a chave **publicável** (fica no servidor; a `service_role` não é usada em lugar
+nenhum). A sessão fica em cookies `HttpOnly` + `Secure` + `SameSite=Lax`. Em cada requisição o backend valida o JWT
+(ES256, com as chaves públicas do projeto em `/auth/v1/.well-known/jwks.json`: assinatura, emissor, audiência
+`authenticated`, validade) e renova o token vencido com o refresh token. Só entra quem estiver **ativo** na tabela
+`usuarios_autorizados`; sem isso, mesmo uma conta existente no Supabase é recusada. Sem sessão, as páginas levam ao
+login e as APIs respondem 401. "Sair" encerra a sessão no Supabase e apaga os cookies. Requisições que alteram dados
+vindas de outro site são recusadas (verificação de `Origin`). Não há rota de cadastro no sistema.
+
+**Banco e RLS:** o JWT do usuário não chega ao PostgreSQL: o Worker conecta pelo Hyperdrive como `app_clientes`
+(privilégio mínimo, sem BYPASSRLS), e a autorização é feita no backend. RLS ligado em todas as tabelas, com
+políticas só para `app_clientes`; `anon` e `authenticated` (inclusive usuários logados usando a API REST do Supabase
+diretamente) não têm acesso a nenhuma tabela. `usuarios_autorizados` é só leitura para a aplicação.
 
 **Importação (CPU do plano gratuito):** o navegador lê o `.xlsx`/`.xls`/`.csv` (`static/planilhas.js`, sem
 bibliotecas externas) e envia as linhas em lotes para `/api/importacao/lote`. O servidor não abre o Excel. A gravação
@@ -76,23 +82,28 @@ quando nada mudou no banco. Os valores lidos no navegador são idênticos aos da
 `tests/test_planilhas_navegador.py`). Se o navegador não conseguir ler por um motivo técnico, o arquivo é enviado
 inteiro, como antes (`/api/importacao/arquivo`, mantido).
 
+### Usuários e login (painel do Supabase)
+
+1. **Fechar o cadastro público** (uma vez): Supabase > Authentication > Sign In / Providers > desative
+   **Allow new users to sign up**. (Mesmo aberto, quem se cadastrar por fora não entra: falta a autorização abaixo.)
+2. **Criar o usuário:** Authentication > Users > **Add user** > *Create new user*: e-mail e senha, marcando
+   **Auto Confirm User**. Entregue a senha à pessoa por um canal seguro.
+3. **Autorizar no sistema:** SQL Editor:
+   `INSERT INTO public.usuarios_autorizados (email, nome) VALUES ('pessoa@empresa.com.br', 'Nome da pessoa');`
+   (o e-mail em letras minúsculas, igual ao do passo 2).
+4. **Bloquear alguém:** `UPDATE public.usuarios_autorizados SET ativo = false WHERE email = 'pessoa@empresa.com.br';`
+   (vale em até 1 minuto). Para tirar também do Supabase Auth: Authentication > Users > ... > *Delete user*.
+5. **Trocar senha:** Authentication > Users > ... > *Send password recovery* (ou a pessoa usa a recuperação).
+
 ### Publicar: primeiro a validação, depois a produção
 
 ```bash
 python cloudflare/configurar.py deploy-dev     # Worker de validação: sistema-clientes-dev.<conta>.workers.dev
+WORKER_URL=https://sistema-clientes-dev.<conta>.workers.dev VERIFICAR_EMAIL=... VERIFICAR_SENHA=... \
+  python cloudflare/configurar.py verificar     # bloqueio sem login, login, telas, APIs, importação, sair
+python cloudflare/configurar.py deploy --producao   # só depois de validar
+npx wrangler secret delete ACCESS_PASSWORD --config cloudflare/wrangler.jsonc   # Secret da versão antiga
 ```
-
-1. **Cloudflare Access no Worker de validação** (painel da Cloudflare): Workers & Pages > `sistema-clientes-dev` >
-   Settings > Domains & Routes > `workers.dev` > **Enable Cloudflare Access**. Em Zero Trust > Access > Applications,
-   edite a política para permitir só os e-mails (ou o domínio de e-mail) da empresa. Copie o **Application Audience
-   (AUD) Tag** e o domínio do time (`<time>.cloudflareaccess.com`).
-2. `python cloudflare/configurar.py acesso dev <time>.cloudflareaccess.com <AUD>` e `deploy-dev` de novo.
-3. Validar: abrir o endereço (deve pedir o e-mail da empresa) e, opcionalmente, criar um *Service Token* do Access,
-   incluí-lo na política e rodar `WORKER_URL=... CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... python cloudflare/configurar.py verificar`.
-4. Produção: repetir o passo 1 no Worker `sistema-clientes`, depois
-   `python cloudflare/configurar.py acesso producao <time>.cloudflareaccess.com <AUD>` e
-   `python cloudflare/configurar.py deploy --producao`. Depois, remova o Secret antigo:
-   `npx wrangler secret delete ACCESS_PASSWORD --config cloudflare/wrangler.jsonc`.
 
 ### Desenvolvimento local no runtime do Cloudflare
 
@@ -100,7 +111,7 @@ python cloudflare/configurar.py deploy-dev     # Worker de validação: sistema-
 python cloudflare/configurar.py pacotes
 # banco de TESTE (nunca o de produção):
 set CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://usuario:senha@127.0.0.1:5432/banco_teste
-cd cloudflare && npx wrangler dev        # sem CF_ACCESS_* o Worker responde 503 (falha fechada), como na nuvem
+cd cloudflare && npx wrangler dev        # login pelo Supabase Auth configurado no wrangler.jsonc
 ```
 
 No Linux/macOS (e no Workers Builds) também funciona `uv run pywrangler dev` / `uv run pywrangler deploy` dentro de
@@ -113,7 +124,7 @@ Arquitetura: o Render executa o Flask com Gunicorn; o Supabase guarda o PostgreS
 ### Antes de publicar (obrigatório)
 
 1. **Revise o RLS no Supabase.** O script `scripts/supabase_rls_revisao.sql` remove o acesso das chaves públicas (`anon`, `authenticated`) às tabelas e habilita RLS. **Não é executado automaticamente:** leia, rode no SQL Editor do Supabase e confirme a verificação ao final.
-2. **Não há login próprio.** O acesso é pelo Cloudflare Access (domínio próprio atrás do Access) e o sistema confere o token do Access. O Render se recusa a iniciar sem `CF_ACCESS_TEAM_DOMAIN` e `CF_ACCESS_AUD`.
+2. **Login pelo Supabase Auth.** O Render se recusa a iniciar sem `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`.
 3. **Use um banco de teste** para o `pytest`. Nunca rode os testes apontando para o banco de produção.
 
 ### Configuração no painel do Render (passo a passo)
@@ -128,10 +139,10 @@ Arquitetura: o Render executa o Flask com Gunicorn; o Supabase guarda o PostgreS
    - **Auto-Deploy:** desligado (publique manualmente, depois de conferir)
 4. Em **Environment**, cadastre (marque as duas primeiras como *Secret*):
    - `DATABASE_URL` = conexão do Supabase no modo **Transaction pooler** (porta **6543**), no formato `postgresql://postgres.<ref>:<senha>@aws-0-<regiao>.pooler.supabase.com:6543/postgres`. Copie-a de Project Settings > Database.
-   - `CF_ACCESS_TEAM_DOMAIN` = `<time>.cloudflareaccess.com`
-   - `CF_ACCESS_AUD` = Application Audience (AUD) Tag da aplicação do Access
+   - `SUPABASE_URL` = `https://<projeto>.supabase.co`
+   - `SUPABASE_PUBLISHABLE_KEY` = chave publicável (`sb_publishable_...`); nunca a `service_role`
 5. Clique em **Create Web Service** ou **Deploy**. Não há outras variáveis: `PORT` e `RENDER=true` são definidas pelo próprio Render.
-6. Ao final do deploy, abra `https://<seu-servico>.onrender.com/healthz`: deve mostrar `{"status":"ok"}`. Depois abra a raiz pelo domínio protegido pelo Access.
+6. Ao final do deploy, abra `https://<seu-servico>.onrender.com/healthz`: deve mostrar `{"status":"ok"}`. Depois abra a raiz: deve aparecer a tela de login.
 
 Na primeira inicialização, a aplicação cria no Supabase as tabelas que ainda não existem (inclusive `arquivos_importacao`). Isso não apaga nem altera dados já existentes. Se preferir criá-las manualmente, peça a revisão antes.
 
@@ -140,9 +151,9 @@ Na primeira inicialização, a aplicação cria no Supabase as tabelas que ainda
 | Variável | Obrigatória | Onde | Descrição |
 |---|---|---|---|
 | `DATABASE_URL` | sim | Render (Secret) | Conexão PostgreSQL do Supabase (pooler, porta 6543) |
-| `CF_ACCESS_TEAM_DOMAIN` | sim no Render/Cloudflare | variável | Domínio do time do Cloudflare Access |
-| `CF_ACCESS_AUD` | sim no Render/Cloudflare | variável | Application Audience (AUD) Tag da aplicação do Access |
-| `RENDER` | automática | Render | Definida pelo Render; ativa a exigência do Cloudflare Access |
+| `SUPABASE_URL` | sim no Render/Cloudflare | variável | Endereço do projeto Supabase (login) |
+| `SUPABASE_PUBLISHABLE_KEY` | sim no Render/Cloudflare | variável | Chave publicável do Supabase (não é segredo) |
+| `RENDER` | automática | Render | Definida pelo Render; ativa a exigência de login |
 | `PORT` | automática | Render | Porta HTTP; o Gunicorn usa `$PORT` no comando de início |
 | `TEST_DATABASE_URL` | não | local | Banco de **teste** para `pytest` (nunca produção) |
 | `CLIENTES_HOST` / `CLIENTES_PORT` | não | local | Endereço e porta do `python run.py` |
@@ -152,7 +163,7 @@ O modelo completo está em `.env.example`. O arquivo `.env` real nunca deve ir p
 ### Verificação pós-deploy (checklist)
 
 - [ ] `/healthz` responde `{"status":"ok"}` (200)
-- [ ] Sem passar pelo Cloudflare Access, a raiz é bloqueada (302 para o login do Access, ou 403)
+- [ ] Sem login, a raiz leva à tela de login e as APIs respondem 401
 - [ ] Com o e-mail autorizado, a tela de clientes abre direto
 - [ ] Importe um arquivo de teste (não um arquivo real) e confira a prévia
 - [ ] Os logs do Render não mostram tracebacks
@@ -177,7 +188,8 @@ Cobertura principal:
 - `tests/test_duas_planilhas.py`: importação com duas planilhas e mapeamentos padrão.
 - `tests/test_curva_observacoes.py`: Curva ABC configurável e observações de clientes e contratos.
 - `tests/test_migracao.py`: migração do SQLite antigo (`tests/fixtures/etapa1.db`) para o PostgreSQL.
-- `tests/test_implantacao.py`: arquivos guardados no banco, expiração, XML malicioso, acesso pelo Cloudflare Access, `/healthz`, varredura de segredos e `.gitignore`.
+- `tests/test_implantacao.py`: arquivos guardados no banco, expiração, XML malicioso, `/healthz`, varredura de segredos e `.gitignore`.
+- `tests/test_autenticacao.py`: login com Supabase Auth (simulado), JWT ES256, usuários autorizados, sessão, saída, CSRF.
 - `tests/conftest.py`: fixtures compartilhadas (schema isolado por teste, consulta direta ao banco, reabertura da aplicação).
 
 ## Migração do SQLite
@@ -302,7 +314,8 @@ Nomes de cliente e código não diferenciam maiúsculas (índices únicos sobre 
 
 ## Limitações desta versão
 
-- Acesso pelo Cloudflare Access (e-mail de cada pessoa), mas o sistema ainda não tem perfis nem registro de quem alterou o quê (o e-mail do Access já chega à aplicação e pode ser usado para isso).
+- Login individual (Supabase Auth), mas ainda sem perfis nem registro de quem alterou o quê (o e-mail do usuário já chega à aplicação e pode ser usado para isso).
+- A extensão `unaccent` está no schema `public` (aviso do Supabase, risco baixo). Pode ser movida para `extensions` numa janela de manutenção.
 - No Supabase, ative o RLS (script `scripts/supabase_rls_revisao.sql`, a ser revisado antes de executar).
 - A ordenação de textos segue a regra antiga do sistema (sem acentos, sem diferença de maiúsculas), via `unaccent`. Depende da extensão estar disponível no `search_path` (no Supabase, schema `extensions`).
 - Importação aceita `.xlsx`, CSV e `.xls` no formato XML do Excel 2003 (SpreadsheetML, lido com a biblioteca padrão). O `.xls` binário antigo (BIFF) não é aceito: abra no Excel e salve como `.xlsx`. Limite de 25 MB e 50 mil linhas por arquivo.

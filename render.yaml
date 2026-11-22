@@ -1,6 +1,6 @@
 # Blueprint do Render (opcional). Em "New > Blueprint" o Render lê este arquivo.
 # Os segredos (DATABASE_URL) NÃO ficam aqui: são preenchidos no painel do Render.
-# Não há login próprio: o acesso é pelo Cloudflare Access (CF_ACCESS_TEAM_DOMAIN e CF_ACCESS_AUD obrigatórias).
+# Login com Supabase Auth: SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY obrigatórias (não são segredos).
 services:
   - type: web
     name: sistema-clientes
@@ -14,7 +14,7 @@ services:
     envVars:
       - key: DATABASE_URL      # conexão do Supabase (modo Transaction pooler, porta 6543)
         sync: false
-      - key: CF_ACCESS_TEAM_DOMAIN   # <time>.cloudflareaccess.com
+      - key: SUPABASE_URL              # https://<projeto>.supabase.co
         sync: false
-      - key: CF_ACCESS_AUD           # Application Audience (AUD) Tag
+      - key: SUPABASE_PUBLISHABLE_KEY  # chave publicável (sb_publishable_...); NUNCA a service_role
         sync: false

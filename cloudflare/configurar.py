@@ -7,13 +7,12 @@ Passos (rode da raiz do projeto):
     (alternativa: python cloudflare/configurar.py sql-senha  -> SQL para colar no SQL Editor do Supabase)
     python cloudflare/configurar.py hyperdrive    # cria o Hyperdrive (conexão Direct) e grava o id no wrangler.jsonc
     python cloudflare/configurar.py pacotes       # baixa as dependências Python (Python puro) para python_modules/
-    python cloudflare/configurar.py acesso dev <time>.cloudflareaccess.com <AUD>   # Cloudflare Access (validação)
     python cloudflare/configurar.py deploy-dev    # publica a versão de VALIDAÇÃO (sistema-clientes-dev)
-    python cloudflare/configurar.py verificar     # testa ponta a ponta (WORKER_URL=...; Service Token do Access)
-    python cloudflare/configurar.py acesso producao <time>.cloudflareaccess.com <AUD>
+    python cloudflare/configurar.py verificar     # testa ponta a ponta (WORKER_URL=..., VERIFICAR_EMAIL/VERIFICAR_SENHA)
     python cloudflare/configurar.py deploy --producao   # só depois de validar: substitui a produção
 
-Não há usuário e senha no sistema: o acesso é feito pelo Cloudflare Access (e-mails autorizados).
+Login: Supabase Auth (e-mail e senha) + tabela usuarios_autorizados. SUPABASE_URL e a chave publicável ficam
+em wrangler.jsonc (não são segredos); a chave service_role nunca é usada.
 
 As credenciais do usuário app_clientes ficam em um arquivo FORA do repositório
 (padrão: ../credenciais-cloudflare.env, ao lado da pasta do projeto; outra pasta: CREDENCIAIS_CLOUDFLARE=...).
@@ -158,32 +157,15 @@ def deploy() -> None:
     _publicar()
 
 
-def acesso() -> None:
-    """Grava no wrangler.jsonc o domínio do time e o AUD da aplicação do Cloudflare Access (não são segredos)."""
-    if len(sys.argv) != 5 or sys.argv[2] not in ("dev", "producao"):
-        sys.exit("Uso: python cloudflare/configurar.py acesso dev|producao <time>.cloudflareaccess.com <AUD>")
-    ambiente, dominio, aud = sys.argv[2], sys.argv[3].removeprefix("https://").strip("/"), sys.argv[4].strip()
-    if not re.fullmatch(r"[a-z0-9-]+\.cloudflareaccess\.com", dominio) or not re.fullmatch(r"[0-9a-f]{64}", aud):
-        sys.exit("Domínio esperado: <time>.cloudflareaccess.com; AUD: 64 caracteres hexadecimais (Application Audience Tag).")
-    texto = WRANGLER.read_text(encoding="utf-8")
-    novo = f'"vars": {{ "CF_ACCESS_TEAM_DOMAIN": "{dominio}", "CF_ACCESS_AUD": "{aud}" }}'
-    padrao = r'"vars": \{ "CF_ACCESS_TEAM_DOMAIN": "[^"]*", "CF_ACCESS_AUD": "[^"]*" \}'
-    ocorrencias = list(re.finditer(padrao, texto))   # 1ª = produção, 2ª = env.dev
-    alvo = ocorrencias[1] if ambiente == "dev" else ocorrencias[0]
-    texto = texto[:alvo.start()] + novo + texto[alvo.end():]
-    WRANGLER.write_text(texto, encoding="utf-8", newline="\n")
-    print(f"Cloudflare Access ({ambiente}) gravado no wrangler.jsonc. Publique de novo para valer.")
-
-
 def verificar() -> None:
     """Roda scripts/verificar_worker.py contra um Worker publicado (WORKER_URL).
 
-    Para passar pelo Cloudflare Access, defina CF_ACCESS_CLIENT_ID e CF_ACCESS_CLIENT_SECRET (Service Token
-    incluído na política da aplicação) ou coloque-os no arquivo de credenciais (fora do repositório)."""
+    Para as verificações com login, informe um usuário autorizado em VERIFICAR_EMAIL e VERIFICAR_SENHA
+    (variáveis de ambiente ou arquivo de credenciais, fora do repositório)."""
     cred = credenciais()
     url = os.environ.get("WORKER_URL") or sys.exit("Defina WORKER_URL (ex.: https://sistema-clientes-dev.<conta>.workers.dev).")
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    for chave in ("CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"):
+    for chave in ("VERIFICAR_EMAIL", "VERIFICAR_SENHA"):
         if cred.get(chave) and not env.get(chave):
             env[chave] = cred[chave]
     res = subprocess.run([sys.executable, str(RAIZ / "scripts" / "verificar_worker.py"), url, "--exige-bloqueio"], env=env)
@@ -192,7 +174,7 @@ def verificar() -> None:
 
 if __name__ == "__main__":
     passos = {"senha-banco": senha_banco, "sql-senha": sql_senha, "hyperdrive": hyperdrive, "pacotes": pacotes,
-              "acesso": acesso, "deploy-dev": deploy_dev, "deploy": deploy, "verificar": verificar}
+              "deploy-dev": deploy_dev, "deploy": deploy, "verificar": verificar}
     if len(sys.argv) < 2 or sys.argv[1] not in passos:
         sys.exit(__doc__)
     passos[sys.argv[1]]()
