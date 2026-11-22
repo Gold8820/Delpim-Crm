@@ -29,6 +29,63 @@ A extensão `unaccent` é usada na ordenação e na busca por nome; no Supabase 
   (ou `pg_dump`). Os arquivos enviados para importação ficam guardados no próprio banco (tabela `arquivos_importacao`) e são apagados após 24 horas. Nada é gravado no disco do servidor.
 - Migração de um arquivo SQLite antigo (`data/clientes.db`): veja a seção *Migração do SQLite* abaixo.
 
+## Implantação no Cloudflare Workers (Python Workers) + Hyperdrive + Supabase
+
+A mesma aplicação Flask roda no Cloudflare Workers pelo adaptador WSGI oficial
+(`src/worker.py`: `from workers import wsgi` / `Default = wsgi.entrypoint(app)`), com `create_app(cloudflare=True)`.
+O `python run.py` continua funcionando como antes.
+
+| Peça | Onde |
+|---|---|
+| Entrada do Worker | `src/worker.py` |
+| Configuração do Cloudflare | `cloudflare/wrangler.jsonc` (Worker `sistema-clientes`, Hyperdrive, Static Assets, variáveis) |
+| Dependências do Worker | `cloudflare/pyproject.toml`: Flask, openpyxl, defusedxml, pg8000 (todas em Python puro) |
+| Montagem do pacote | `cloudflare/build.mjs` (roda sozinho no `dev`/`deploy`; copia só `src/worker.py`, `clientes/`, `templates/`) |
+| Configuração assistida | `cloudflare/configurar.py` (senha do banco, Hyperdrive, pacotes, deploy) |
+| Banco (permissões e RLS) | `scripts/supabase_cloudflare.sql` · migração de esquema: `scripts/migrar_schema.py` |
+| Verificação ponta a ponta | `scripts/verificar_worker.py <url>` (dados fictícios, apaga o que cria) |
+
+**Por que a pasta `cloudflare/`:** o `pywrangler` se recusa a rodar com um `requirements.txt` na mesma pasta, e o
+`requirements.txt` da raiz continua servindo ao `python run.py` e ao Render.
+
+**Banco:** localmente, `DATABASE_URL` (psycopg). No Worker, o binding `HYPERDRIVE` (propriedades `host`, `port`,
+`user`, `password`, `database` lidas a cada requisição) com o driver **pg8000**: o psycopg depende da libpq, que não
+existe no Pyodide. Uma conexão por requisição, fechada no fim dela; transação desfeita se a requisição falhar.
+`CLIENTES_DB_DRIVER=pg8000` faz o ambiente local usar o mesmo driver do Worker (a suíte inteira passa nos dois).
+O Hyperdrive usa a conexão **Direct** do Supabase, com o cache de consultas **desligado** (o sistema lê logo depois
+de gravar; com cache, a tela mostraria dados antigos).
+
+**Permissões:** o Worker conecta como `app_clientes` (só SELECT/INSERT/UPDATE/DELETE, sem DDL, sem BYPASSRLS).
+Alterações de esquema rodam à parte (`scripts/migrar_schema.py`, usuário `postgres`). RLS ligado em todas as tabelas,
+com uma única política (para `app_clientes`); `anon`/`authenticated` sem acesso.
+
+**Acesso:** login HTTP Basic obrigatório em todas as rotas (inclusive API, importação e `/static/*`), com
+`ACCESS_USER` (variável) e `ACCESS_PASSWORD` (Secret). Sem o Secret, o Worker responde 503 (falha fechada).
+Só `/healthz` fica aberto (sem dados). Recomendado: somar o Cloudflare Access na frente do Worker.
+
+### Publicar (uma vez)
+
+```bash
+npx wrangler login                                   # abre o navegador (autorização da conta Cloudflare)
+python cloudflare/configurar.py senha-banco          # pede a senha do postgres do Supabase (sem eco)
+python cloudflare/configurar.py hyperdrive           # cria o Hyperdrive e grava o id no wrangler.jsonc
+python cloudflare/configurar.py deploy               # baixa as dependências e publica em *.workers.dev
+npx wrangler secret put ACCESS_PASSWORD --config cloudflare/wrangler.jsonc
+python scripts/verificar_worker.py https://sistema-clientes.<sua-conta>.workers.dev
+```
+
+### Desenvolvimento local no runtime do Cloudflare
+
+```bash
+python cloudflare/configurar.py pacotes
+# banco de TESTE (nunca o de produção):
+set CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://usuario:senha@127.0.0.1:5432/banco_teste
+cd cloudflare && npx wrangler dev        # senha de login local: arquivo cloudflare/.dev.vars (ACCESS_PASSWORD=...)
+```
+
+No Linux/macOS (e no Workers Builds) também funciona `uv run pywrangler dev` / `uv run pywrangler deploy` dentro de
+`cloudflare/`. No Windows o `pywrangler sync` falha ao criar o ambiente Pyodide; por isso `configurar.py pacotes`.
+
 ## Implantação no Render (aplicação) + Supabase (banco)
 
 Arquitetura: o Render executa o Flask com Gunicorn; o Supabase guarda o PostgreSQL. Nada depende do disco do servidor.

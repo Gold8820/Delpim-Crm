@@ -20,7 +20,15 @@ uploads/
 *.csv
 
 # Exceção: fixture sintético usado pelos testes de migração (dados fictícios)
+!tests/fixtures/etapa1.db
 
+# Cloudflare Workers (segredos locais e pacotes gerados pelo pywrangler)
+.dev.vars
+.dev.vars.*
+.wrangler/
+python_modules/
+.venv-workers/
+node_modules/
 
 # Python / ferramentas
 __pycache__/
@@ -28,3 +36,4 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+build/

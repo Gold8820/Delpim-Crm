@@ -6,11 +6,9 @@ import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import psycopg
-
 from flask import Blueprint, Response, current_app, jsonify, render_template, request
 
-from . import configs as cfg, importer, repository as repo
+from . import configs as cfg, db as dbmod, importer, repository as repo
 from .classification import LABELS, describe_faixas, validate_faixas
 from .db import get_db
 from .validation import (CONTRACT_LABELS, FIELD_LABELS, UFS, normalize, parse_money, to_note_checked)
@@ -31,8 +29,10 @@ def error(message: str, status: int = 400, fields: dict | None = None):
 
 @bp.get("/")
 def index():
-    static = Path(current_app.static_folder)
-    version = max((int(f.stat().st_mtime) for f in static.glob("*") if f.is_file()), default=0)
+    version = current_app.config.get("STATIC_VERSION")
+    if not version:  # local: data dos arquivos (CSS/JS novos aparecem sem limpar o cache do navegador)
+        static = Path(current_app.static_folder)
+        version = max((int(f.stat().st_mtime) for f in static.glob("*") if f.is_file()), default=0)
     return render_template("index.html", version=version)
 
 
@@ -101,7 +101,7 @@ def curva_put():
     try:
         changed = repo.save_faixas(db, parsed)
         db.commit()
-    except psycopg.Error:
+    except dbmod.Error:
         db.rollback()
         current_app.logger.exception("Falha ao salvar a Curva ABC")
         return error("Não foi possível salvar a Curva ABC. Nada foi alterado.", 500)
@@ -171,7 +171,7 @@ def _save_client(client_id: int | None, success_status: int = 200):
         if clean["valor_centavos"] is not None:
             repo.upsert_payment(db, client_id, clean["mes"], clean["valor_centavos"], "manual")
         db.commit()
-    except psycopg.IntegrityError:
+    except dbmod.IntegrityError:
         db.rollback()
         return error("Já existe um cliente com este código ou CNPJ.", 409)
     row = repo.get_client(db, client_id)
@@ -402,7 +402,7 @@ def commit():
                                 body.get("arquivo_contratos"))
     except importer.ImportFailure as exc:
         return error(str(exc))
-    except psycopg.Error:
+    except dbmod.Error:
         current_app.logger.exception("Falha ao gravar importação")
         return error("Não foi possível gravar a importação. Nenhum dado foi alterado.", 500)
     return jsonify(result)

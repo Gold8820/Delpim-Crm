@@ -1,0 +1,37 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  // Novo Worker (o Worker "delpim-crm", que só encaminha para o Render, continua intacto).
+  "name": "sistema-clientes",
+  // O código fica na raiz do projeto (src/worker.py, clientes/, templates/), o mesmo do `python run.py`.
+  // O build copia para cloudflare/build/ apenas esses arquivos; é essa pasta que vai para o Worker.
+  // (Esta pasta cloudflare/ existe porque o pywrangler não aceita um requirements.txt ao lado do
+  // pyproject.toml, e o requirements.txt da raiz continua servindo ao `python run.py` e ao Render.)
+  "main": "build/worker.py",
+  "build": { "command": "node build.mjs", "watch_dir": ["../src", "../clientes", "../templates"] },
+  "compatibility_date": "2026-11-20",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "rules": [
+    { "type": "Data", "globs": ["templates/**/*.html"], "fallthrough": false }
+  ],
+  // Workers Static Assets: pasta static/ (CSS e JS). Toda requisição passa primeiro pelo Worker,
+  // para que os arquivos estáticos também exijam login.
+  "assets": {
+    "directory": "../static",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  // Supabase (conexão Direct) via Hyperdrive. O id é o da configuração criada na Cloudflare.
+  // Desenvolvimento local: defina CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE
+  // apontando para um banco de TESTE (nunca o de produção).
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "2a377c09a7ae4baaad3f27307f560f31" }
+  ],
+  // Usuário do login (a senha fica no Secret ACCESS_PASSWORD: `npx wrangler secret put ACCESS_PASSWORD`).
+  "vars": { "ACCESS_USER": "admin" },
+  // Roda o Worker perto do banco (Supabase em AWS us-east-2): cada requisição faz várias consultas,
+  // e assim cada ida e volta ao banco leva poucos milissegundos em vez de ~150 ms.
+  "placement": { "region": "aws:us-east-2" },
+  "observability": { "enabled": true }
+}

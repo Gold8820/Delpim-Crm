@@ -16,13 +16,31 @@ para manter formato e comparações. Valores monetários são inteiros em centav
 
 Pré-requisito: a extensão `unaccent` (ordenação sem acentos). No Supabase ela já está disponível;
 o `init_db` tenta criá-la e, se o usuário não tiver permissão, avisa no log.
+
+Dois ambientes, um só código:
+  - Local (python run.py / testes): driver psycopg, conexão pela variável DATABASE_URL.
+  - Cloudflare Workers (Pyodide): driver pg8000 (Python puro; o psycopg depende da libpq, que não existe
+    no Pyodide). A conexão é aberta a cada requisição com as propriedades do binding HYPERDRIVE
+    (host, porta, usuário, senha, banco), lidas em tempo de execução. Nada de conexão global:
+    cada requisição abre a sua, e ela é fechada no fim da requisição (teardown).
+O restante do sistema usa sempre a mesma interface (conn.execute(...).fetchone()/fetchall(), commit,
+rollback, cursor().executemany) e captura erros por db.Error / db.IntegrityError.
+
+Alterações de esquema (init_db) rodam só no ambiente local ou pelo script scripts/migrar_schema.py,
+com um usuário que tenha permissão de DDL. O Worker nunca altera o esquema.
 """
 from __future__ import annotations
 
 import logging
+import os
+from urllib.parse import parse_qs, unquote, urlsplit
 
-import psycopg
-from flask import current_app, g
+from flask import current_app, g, request
+
+try:  # local: psycopg (libpq). No Cloudflare Workers ele não existe e usamos pg8000.
+    import psycopg
+except ImportError:  # pragma: no cover - só acontece no Pyodide
+    psycopg = None
 
 log = logging.getLogger(__name__)
 
@@ -212,32 +230,190 @@ def _row_factory(cursor):
     return make
 
 
-def connect(url: str, schema: str | None = None) -> psycopg.Connection:
-    """Abre uma conexão. `schema` só é usado pelos testes (cada teste tem o seu schema isolado)."""
+# --------------------------------------------------------------------------- erros (comuns aos dois drivers)
+
+class DriverError(Exception):
+    """Erro do banco no driver pg8000 (Cloudflare). No local, os erros são os do psycopg."""
+
+
+class DriverIntegrityError(DriverError):
+    """Violação de unicidade, chave estrangeira ou CHECK (SQLSTATE classe 23)."""
+
+
+Error: tuple = (DriverError,) + ((psycopg.Error,) if psycopg else ())
+IntegrityError: tuple = (DriverIntegrityError,) + ((psycopg.IntegrityError,) if psycopg else ())
+
+
+# --------------------------------------------------------------------------- conexão local
+
+def connect(url: str, schema: str | None = None):
+    """Abre uma conexão. `schema` só é usado pelos testes (cada teste tem o seu schema isolado).
+
+    Driver: psycopg. Com CLIENTES_DB_DRIVER=pg8000, usa o mesmo driver do Cloudflare (serve para testar
+    localmente o caminho da nuvem com a suíte completa).
+    """
+    if os.environ.get("CLIENTES_DB_DRIVER") == "pg8000" or psycopg is None:
+        return connect_pg8000(**_url_params(url), schema=schema)
     extra = {"options": f"-c search_path={schema},public,extensions"} if schema else {}
     # prepare_threshold=None: sem prepared statements no servidor. O pooler do Supabase (modo transação)
     # não os mantém entre conexões; desligar evita erros do tipo 'prepared statement does not exist'.
     return psycopg.connect(url, row_factory=_row_factory, prepare_threshold=None, **extra)
 
 
-def _migrate(conn: psycopg.Connection) -> None:
+def _url_params(url: str) -> dict:
+    parts = urlsplit(url)
+    query = {k: v[-1] for k, v in parse_qs(parts.query).items()}
+    host = parts.hostname or "127.0.0.1"
+    local = host in ("127.0.0.1", "localhost", "::1")
+    return {"host": host, "port": parts.port or 5432,
+            "user": unquote(parts.username or "postgres"),
+            "password": unquote(parts.password) if parts.password else None,
+            "database": (parts.path or "/postgres").lstrip("/") or "postgres",
+            "ssl": query.get("sslmode", "disable" if local else "require") not in ("disable", "allow", "prefer")}
+
+
+# --------------------------------------------------------------------------- conexão Cloudflare (pg8000)
+
+class _Cursor:
+    """Resultado de um comando, com a mesma interface usada do psycopg (linhas como `Row`)."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self.rowcount = raw.rowcount
+        desc = raw.description
+        self._names = [d[0] for d in desc] if desc else None
+        self.description = desc or None   # None em comandos sem resultado, como no DB-API/psycopg
+
+    def fetchone(self):
+        if self._names is None:
+            return None
+        values = self._raw.fetchone()
+        return None if values is None else Row(zip(self._names, values))
+
+    def fetchall(self):
+        if self._names is None:
+            return []
+        return [Row(zip(self._names, values)) for values in self._raw.fetchall()]
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class _CursorContext:
+    """`with conn.cursor() as cur: cur.executemany(...)`, como no psycopg."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.rowcount = -1
+
+    def execute(self, sql, params=None):
+        cur = self._conn.execute(sql, params)
+        self.rowcount = cur.rowcount
+        return cur
+
+    def executemany(self, sql, seq):
+        for params in seq:
+            self._conn.execute(sql, params)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class Pg8000Connection:
+    """Conexão pg8000 com a interface do psycopg usada pelo sistema.
+
+    - placeholders %s (lista) e %(nome)s (dicionário), como no psycopg;
+    - sem parâmetros, o comando vai como texto simples (o '%' não precisa ser duplicado), como no psycopg;
+    - transação aberta no primeiro comando; commit()/rollback() explícitos;
+    - erros do servidor convertidos para DriverError / DriverIntegrityError.
+    """
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def execute(self, sql, params=None):
+        import pg8000.dbapi as dbapi
+
+        cur = self._raw.cursor()
+        try:
+            if params:
+                cur.execute(sql, params)
+            else:
+                cur.execute(sql)
+        except dbapi.DatabaseError as exc:
+            info = exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
+            code = str(info.get("C", ""))
+            kind = DriverIntegrityError if code.startswith("23") else DriverError
+            raise kind(f"{code} {info.get('M') or exc}".strip()) from exc
+        return _Cursor(cur)
+
+    def cursor(self):
+        return _CursorContext(self)
+
+    def commit(self):
+        self._raw.commit()
+
+    def rollback(self):
+        try:
+            self._raw.rollback()
+        except Exception:  # conexão já perdida: não há o que desfazer
+            log.warning("rollback não executado (conexão encerrada)")
+
+    def close(self):
+        try:
+            self._raw.close()
+        except Exception:
+            pass
+
+
+def connect_pg8000(host, port, user, password, database, ssl=False, schema=None):
+    import pg8000.dbapi as dbapi
+
+    # pyformat aceita os dois estilos usados no código: %s (lista) e %(nome)s (dicionário).
+    dbapi.paramstyle = "pyformat"
+    extra = {}
+    if schema:
+        extra["startup_params"] = {"options": f"-c search_path={schema},public,extensions"}
+    ssl_context = None
+    if ssl:
+        import ssl as ssl_module
+        ssl_context = ssl_module.create_default_context()
+    raw = dbapi.connect(host=host, port=int(port), user=user, password=password, database=database,
+                        ssl_context=ssl_context, timeout=30, **extra)
+    return Pg8000Connection(raw)
+
+
+def connect_hyperdrive(binding):
+    """Conexão pelo binding HYPERDRIVE do Worker, com as propriedades lidas a cada requisição.
+
+    O Hyperdrive faz o TLS e o pool de conexões com o Supabase; entre o Worker e ele não se usa TLS
+    (é o mesmo que a documentação da Cloudflare indica para os drivers Python).
+    """
+    return connect_pg8000(host=binding.host, port=binding.port, user=binding.user,
+                          password=binding.password, database=binding.database, ssl=False)
+
+
+def _migrate(conn) -> None:
     """Acrescenta colunas que faltam, sem apagar nada."""
     for table, additions in _ADDITIONS.items():
         for name, ddl in additions.items():
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {ddl}")
 
 
-def _ensure_unaccent(conn: psycopg.Connection) -> None:
+def _ensure_unaccent(conn) -> None:
     """A ordenação e a busca por nome usam unaccent(). Tenta criar a extensão uma vez."""
     try:
         conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
-    except psycopg.Error:
+    except Error:
         conn.rollback()
         log.warning("Não foi possível criar a extensão 'unaccent'. Peça ao administrador do banco "
                     "para executar: CREATE EXTENSION IF NOT EXISTS unaccent;")
 
 
-def _seed_curvas(conn: psycopg.Connection) -> None:
+def _seed_curvas(conn) -> None:
     """Cria as faixas da Curva ABC com os valores iniciais, somente se a tabela estiver vazia."""
     from .classification import VALORES_INICIAIS
     from .repository import now
@@ -274,13 +450,34 @@ def init_db(url: str, schema: str | None = None) -> None:
         conn.close()
 
 
-def get_db() -> psycopg.Connection:
+def worker_env():
+    """`env` do Cloudflare Worker na requisição atual (None fora do Cloudflare)."""
+    try:
+        return request.environ.get("workers.env")
+    except RuntimeError:  # fora de uma requisição
+        return None
+
+
+def get_db():
+    """Conexão da requisição atual: aberta na primeira consulta, fechada no fim da requisição."""
     if "db" not in g:
-        g.db = connect(current_app.config["DATABASE_URL"], current_app.config.get("DB_SCHEMA"))
+        env = worker_env()
+        binding = getattr(env, "HYPERDRIVE", None) if env is not None else None
+        if binding is not None:
+            g.db = connect_hyperdrive(binding)
+        else:
+            url = current_app.config.get("DATABASE_URL")
+            if not url:
+                raise RuntimeError("Banco não configurado: defina DATABASE_URL (local) "
+                                   "ou o binding HYPERDRIVE (Cloudflare).")
+            g.db = connect(url, current_app.config.get("DB_SCHEMA"))
     return g.db
 
 
 def close_db(_exc=None) -> None:
     db = g.pop("db", None)
     if db is not None:
-        db.close()
+        try:
+            db.rollback()  # descarta transação não confirmada (ex.: erro no meio da requisição)
+        finally:
+            db.close()

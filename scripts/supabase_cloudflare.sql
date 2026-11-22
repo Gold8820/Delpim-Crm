@@ -1,0 +1,78 @@
+-- Banco do Supabase para o Cloudflare Workers (Hyperdrive). Idempotente: pode rodar mais de uma vez.
+-- Nada é apagado: só cria o que falta, concede permissões e liga o RLS.
+--
+-- Separação de permissões:
+--   * migração (este script e scripts/migrar_schema.py): usuário "postgres" do Supabase (tem DDL);
+--   * aplicação (Worker, via Hyperdrive): usuário "app_clientes", só SELECT/INSERT/UPDATE/DELETE,
+--     sem DDL, sem BYPASSRLS, sem acesso a outros schemas do Supabase (auth, storage, vault...).
+--
+-- A senha do app_clientes NÃO fica aqui. Defina-a à parte (SQL Editor do Supabase):
+--     ALTER ROLE app_clientes PASSWORD '<senha forte>';
+-- e use a mesma senha só na configuração do Hyperdrive.
+
+-- 1) Tabela que a versão atual da aplicação usa para guardar planilhas entre as etapas da importação
+--    (no Cloudflare não há disco). Igual à de clientes/db.py.
+CREATE TABLE IF NOT EXISTS public.arquivos_importacao (
+    token TEXT PRIMARY KEY,
+    extensao TEXT NOT NULL,
+    conteudo BYTEA NOT NULL,
+    criado_em TEXT NOT NULL
+);
+
+-- 2) Usuário da aplicação (criado sem senha utilizável; a senha é definida à parte, ver acima).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_clientes') THEN
+        CREATE ROLE app_clientes LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+            CONNECTION LIMIT 40;
+    END IF;
+END $$;
+-- unaccent() (ordenação/busca sem acento) fica no schema "extensions" do Supabase.
+ALTER ROLE app_clientes SET search_path = public, extensions;
+ALTER ROLE app_clientes SET statement_timeout = '30s';
+ALTER ROLE app_clientes SET idle_in_transaction_session_timeout = '60s';
+
+GRANT USAGE ON SCHEMA public TO app_clientes;
+GRANT USAGE ON SCHEMA extensions TO app_clientes;
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+    public.clientes, public.pagamentos_mensais, public.importacoes, public.contratos,
+    public.contrato_valores, public.configuracoes_importacao, public.curvas_abc,
+    public.arquivos_importacao, public.identificadores_externos
+    TO app_clientes;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_clientes;
+
+-- 3) API pública do Supabase (anon/authenticated) sem nenhum acesso às tabelas do sistema.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+
+-- 4) RLS ligado em todas as tabelas. Única política: o usuário da aplicação.
+--    (O usuário "postgres", usado em migrações e pelo backend antigo, ignora RLS e continua funcionando.)
+DO $$
+DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['clientes', 'pagamentos_mensais', 'importacoes', 'contratos', 'contrato_valores',
+                             'configuracoes_importacao', 'curvas_abc', 'arquivos_importacao',
+                             'identificadores_externos']
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
+                       AND policyname = 'app_clientes_acesso') THEN
+            EXECUTE format('CREATE POLICY app_clientes_acesso ON public.%I FOR ALL TO app_clientes '
+                           'USING (true) WITH CHECK (true)', t);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 5) Conferência: RLS ligado, política presente, nenhum privilégio para anon/authenticated.
+SELECT c.relname AS tabela,
+       c.relrowsecurity AS rls_ativo,
+       EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname
+               AND p.policyname = 'app_clientes_acesso') AS politica_app,
+       has_table_privilege('anon', c.oid, 'SELECT') AS anon_le,
+       has_table_privilege('app_clientes', c.oid, 'SELECT') AS app_le
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'r'
+ORDER BY 1;

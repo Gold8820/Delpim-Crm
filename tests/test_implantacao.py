@@ -169,8 +169,13 @@ SENHAS_DE_EXEMPLO = {"SENHA", "senha", "<senha>", "senha-de-teste-123"}
 EXTENSOES_DE_TEXTO = {".py", ".md", ".txt", ".yaml", ".yml", ".example", ".sql", ".js", ".html", ".css", ".json"}
 
 
+# Pastas geradas por ferramentas (fora do Git, ver .gitignore): ambientes virtuais e pacotes do pywrangler.
+PASTAS_GERADAS = {".git", "__pycache__", ".pytest_cache", ".venv", "venv", ".venv-workers", "python_modules",
+                  "node_modules", ".wrangler"}
+
+
 def _arquivos_do_projeto():
-    ignorados = {".git", "__pycache__", ".pytest_cache"}
+    ignorados = PASTAS_GERADAS
     for caminho in ROOT.rglob("*"):
         if caminho.is_file() and not any(parte in ignorados for parte in caminho.relative_to(ROOT).parts):
             yield caminho
@@ -213,7 +218,7 @@ def test_planilhas_e_bancos_no_projeto_sao_somente_os_de_teste():
     """Inclui a pasta data/ (onde ficaria o SQLite real): só os fixtures de teste podem existir no repositório."""
     proibidos = []
     for p in ROOT.rglob("*"):
-        if not p.is_file() or any(parte in {".git", "__pycache__", ".pytest_cache"} for parte in p.parts):
+        if not p.is_file() or any(parte in PASTAS_GERADAS for parte in p.relative_to(ROOT).parts):
             continue
         if p.suffix.lower() in {".xlsx", ".xls", ".csv", ".db", ".sqlite", ".sqlite3"} and "fixtures" not in p.parts:
             proibidos.append(p)

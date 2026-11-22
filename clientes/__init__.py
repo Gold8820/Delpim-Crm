@@ -1,19 +1,25 @@
 """Sistema de Inteligência Geográfica Comercial — cadastro de clientes, importação e Curva ABC.
 
 Configuração por variáveis de ambiente (ver .env.example):
-  DATABASE_URL     conexão do PostgreSQL (Supabase). Obrigatória.
-  ACCESS_PASSWORD  senha do acesso ao sistema (HTTP Basic). Obrigatória no Render.
+  DATABASE_URL     conexão do PostgreSQL (Supabase). Obrigatória no ambiente local.
+  ACCESS_PASSWORD  senha do acesso ao sistema (HTTP Basic). Obrigatória no Render e no Cloudflare.
   ACCESS_USER      usuário do acesso (padrão: admin).
+
+No Cloudflare Workers (src/worker.py, `create_app(cloudflare=True)`):
+  - o banco vem do binding HYPERDRIVE, a cada requisição (ver clientes/db.py);
+  - ACCESS_USER / ACCESS_PASSWORD vêm das variáveis e Secrets do Worker, lidos a cada requisição;
+  - o esquema do banco não é alterado ao iniciar (migrações: scripts/migrar_schema.py);
+  - CSS e JS vêm do Workers Static Assets (ver clientes/cloudflare.py).
 """
 from __future__ import annotations
 
 import hmac
 import os
 
-import psycopg
 from flask import Flask, Response, jsonify, request
 
-from .db import close_db, get_db, init_db
+from . import db as dbmod
+from .db import close_db, get_db, init_db, worker_env
 
 
 def _exige_senha_configurada() -> None:
@@ -32,50 +38,74 @@ def _acesso_autorizado(password: str, user: str) -> bool:
     return usuario_ok and senha_ok
 
 
-def create_app(database_url: str | None = None, schema: str | None = None) -> Flask:
+def _credenciais(app: Flask) -> tuple[str | None, str]:
+    """(senha, usuário) esperados: Secrets do Worker no Cloudflare; variáveis de ambiente no local/Render."""
+    env = worker_env()
+    if env is not None:
+        password = getattr(env, "ACCESS_PASSWORD", None)
+        user = getattr(env, "ACCESS_USER", None)
+        return (str(password) if password else None), (str(user) if user else "admin")
+    return app.config["ACCESS_PASSWORD"], app.config["ACCESS_USER"]
+
+
+def create_app(database_url: str | None = None, schema: str | None = None, *, cloudflare: bool = False) -> Flask:
     """Cria a aplicação. `database_url` padrão: variável de ambiente DATABASE_URL.
 
     `schema` é usado apenas pelos testes, para isolar cada teste em um schema próprio.
+    `cloudflare=True` é usado só por src/worker.py (ver a descrição do módulo).
     """
     _exige_senha_configurada()
     url = database_url or os.environ.get("DATABASE_URL")
-    if not url:
+    if not url and not cloudflare:
         raise RuntimeError("Defina a variável de ambiente DATABASE_URL com a conexão do PostgreSQL "
                            "(Supabase: Project Settings > Database > Connection string).")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     app = Flask(__name__, template_folder=os.path.join(root, "templates"),
-                static_folder=os.path.join(root, "static"))
+                static_folder=None if cloudflare else os.path.join(root, "static"))
     app.config.update(
-        DATABASE_URL=url,
+        DATABASE_URL=None if cloudflare else url,
         DB_SCHEMA=schema,
         ACCESS_PASSWORD=os.environ.get("ACCESS_PASSWORD") or None,
         ACCESS_USER=os.environ.get("ACCESS_USER") or "admin",
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
         JSON_AS_ASCII=False,
+        CLOUDFLARE=cloudflare,
+        STATIC_VERSION="cf" if cloudflare else None,
     )
-    init_db(url, schema)
+    if not cloudflare:
+        init_db(url, schema)
     app.teardown_appcontext(close_db)
 
     @app.before_request
     def exigir_acesso():
-        if request.path == "/healthz" or not app.config["ACCESS_PASSWORD"]:
+        if request.path == "/healthz":
             return None
-        if _acesso_autorizado(app.config["ACCESS_PASSWORD"], app.config["ACCESS_USER"]):
+        password, user = _credenciais(app)
+        if not password:
+            if cloudflare:  # falha fechada: sem senha configurada no Worker, nada é servido
+                return Response("Acesso bloqueado: configure o secret ACCESS_PASSWORD no Worker.", 503,
+                                {"Cache-Control": "no-store"}, mimetype="text/plain")
+            return None
+        if _acesso_autorizado(password, user):
             return None
         return Response("Acesso restrito. Informe usuário e senha.", 401,
                         {"WWW-Authenticate": 'Basic realm="Sistema de clientes", charset="UTF-8"'})
 
     @app.get("/healthz")
     def healthz():
-        """Usado pelo Render para verificar se o serviço e o banco respondem. Não expõe dados."""
+        """Verificação de saúde (Render/Cloudflare): serviço e banco respondem. Não expõe dados."""
         try:
             get_db().execute("SELECT 1")
-        except psycopg.Error:
+        except dbmod.Error:
             return jsonify({"status": "indisponivel"}), 503
         return jsonify({"status": "ok"})
 
     from .routes import bp
     app.register_blueprint(bp)
+
+    if cloudflare:
+        from .cloudflare import register_static
+        register_static(app)
 
     @app.errorhandler(413)
     def too_large(_):

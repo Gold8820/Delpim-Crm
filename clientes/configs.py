@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-import psycopg
+from . import db as dbmod
 
 from .importer import fuzzy_suggest, labels_for, slug, suggest_mapping
 from .repository import now
@@ -102,7 +102,7 @@ def save_config(db, tipo, nome, mapeamento, chave=None, cabecalhos=None, padrao=
         if padrao:
             _set_default(db, config_id)
         db.commit()
-    except psycopg.IntegrityError:
+    except dbmod.IntegrityError:
         db.rollback()
         raise ConfigError("Já existe uma configuração com esse nome.", 409) from None
     return get_config(db, config_id)

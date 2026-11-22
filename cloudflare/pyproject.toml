@@ -1,0 +1,23 @@
+[project]
+name = "sistema-clientes"
+version = "1.0.0"
+description = "Sistema de Inteligência Geográfica Comercial — Flask no Cloudflare Python Workers"
+requires-python = ">=3.12"
+# Dependências do Worker (Pyodide). Todas são Python puro:
+#   flask    -> aplicação (WSGI)
+#   openpyxl -> leitura de .xlsx (com et_xmlfile)
+#   defusedxml -> leitura segura do .xls (XML do Excel 2003)
+#   pg8000   -> PostgreSQL via Hyperdrive (o psycopg depende da libpq, que não existe no Pyodide)
+# Para rodar localmente (python run.py) continue usando requirements.txt (Flask, openpyxl, psycopg).
+dependencies = [
+    "flask==3.1.3",
+    "openpyxl==3.1.5",
+    "defusedxml==0.7.1",
+    "pg8000==1.31.6",
+]
+
+[dependency-groups]
+dev = [
+    "workers-py",
+    "workers-runtime-sdk",
+]
