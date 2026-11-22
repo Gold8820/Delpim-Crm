@@ -7,7 +7,6 @@ Como na produção, o Worker conecta com um usuário de privilégio mínimo (só
 sem DDL), com search_path definido no próprio usuário; o esquema é criado à parte, pelo usuário de migração.
 Driver: pg8000 (o mesmo do Pyodide).
 """
-import base64
 import io
 import json
 import re
@@ -22,20 +21,14 @@ from urllib.parse import urlsplit
 import psycopg
 import pytest
 
-from clientes import create_app
+import acesso_helper as ah
+from clientes import acesso, create_app
 from clientes.db import DriverError, init_db
 
 from test_duas_planilhas import CNPJ_A, CNPJ_B, clientes_xlsx, contratos_xlsx
 
 ROOT = Path(__file__).resolve().parent.parent
-SENHA = "senha-de-teste-123"
-
-
-def basic(user, password):
-    return {"Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()}
-
-
-AUTH = basic("admin", SENHA)
+TOKEN = ah.cabecalho()["Cf-Access-Jwt-Assertion"]
 
 
 # ============================================================================ ambiente simulado
@@ -65,7 +58,7 @@ def banco_worker(pg_url):
 
 
 def _worker_env(banco, **extra):
-    values = {"HYPERDRIVE": banco.binding, "ACCESS_USER": "admin", "ACCESS_PASSWORD": SENHA}
+    values = {"HYPERDRIVE": banco.binding, "CF_ACCESS_TEAM_DOMAIN": ah.TIME, "CF_ACCESS_AUD": ah.AUD}
     values.update(extra)
     return SimpleNamespace(**values)
 
@@ -73,17 +66,19 @@ def _worker_env(banco, **extra):
 @pytest.fixture()
 def cf_app(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("ACCESS_PASSWORD", raising=False)
     monkeypatch.delenv("RENDER", raising=False)
-    return create_app(cloudflare=True)
+    acesso._chaves.update(time=None, lidas_em=0.0, chaves={})
+    app = create_app(cloudflare=True)
+    app.config["CF_ACCESS_JWKS"] = ah.jwks()   # chaves públicas do Access (nos testes, sem rede)
+    return app
 
 
 @pytest.fixture()
 def worker(cf_app, banco_worker):
-    """Cliente HTTP do Worker simulado, já com usuário e senha."""
+    """Cliente HTTP do Worker simulado, como um usuário que já passou pelo Cloudflare Access."""
     c = cf_app.test_client()
     c.environ_base["workers.env"] = _worker_env(banco_worker)
-    c.environ_base["HTTP_AUTHORIZATION"] = AUTH["Authorization"]
+    c.environ_base["HTTP_CF_ACCESS_JWT_ASSERTION"] = TOKEN
     return c
 
 
@@ -136,7 +131,9 @@ def test_wrangler_configura_python_workers_hyperdrive_e_estaticos():
     assert "python_workers" in cfg["compatibility_flags"]
     assert date.fromisoformat(cfg["compatibility_date"]) >= date(2026, 9, 8)   # Hyperdrive no Python Workers
     assert [h["binding"] for h in cfg["hyperdrive"]] == ["HYPERDRIVE"]
-    assert cfg["assets"] == {"directory": "../static", "binding": "ASSETS", "run_worker_first": True}
+    # CSS/JS servidos direto pelo Static Assets (sem CPU do Python); o Cloudflare Access protege o endereço todo.
+    assert cfg["assets"]["directory"] == "./build/public" and cfg["assets"]["binding"] == "ASSETS"
+    assert cfg["assets"]["run_worker_first"] == ["/*", "!/static/*"]
     assert [g for r in cfg["rules"] for g in r["globs"]] == ["templates/**/*.html"]
 
 
@@ -144,15 +141,16 @@ def test_build_copia_somente_o_codigo_do_sistema():
     """O pacote do Worker leva só src/worker.py, clientes/ e templates/ (sem testes, scripts, dados ou .env)."""
     texto = (CF / "build.mjs").read_text(encoding="utf-8")
     copias = re.findall(r'cpSync\(join\(root, ([^)]*)\)', texto)
-    assert copias == ['"src", "worker.py"', '"clientes"', '"templates"']
+    assert copias == ['"src", "worker.py"', '"clientes"', '"templates"', '"static"']
+    assert 'join(out, "public", "static")' in texto   # estáticos só na pasta pública dos assets
 
 
 def test_wrangler_nao_tem_segredos():
     cfg = _wrangler()
-    assert set(cfg.get("vars", {})) <= {"ACCESS_USER"}
+    assert set(cfg.get("vars", {})) <= {"CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD"}
     texto = (CF / "wrangler.jsonc").read_text(encoding="utf-8")
     assert "postgres://" not in texto and "postgresql://" not in texto
-    assert "ACCESS_PASSWORD\":" not in texto
+    assert "ACCESS_PASSWORD" not in texto and "ACCESS_USER" not in texto   # sem login próprio
 
 
 def test_dependencias_do_worker_sao_compativeis_com_pyodide():
@@ -164,34 +162,42 @@ def test_dependencias_do_worker_sao_compativeis_com_pyodide():
     assert not any("psycopg" in d for d in deps)
 
 
-# ============================================================================ acesso protegido
+# ============================================================================ acesso (Cloudflare Access)
 
-def test_sem_senha_configurada_no_worker_nada_e_servido(cf_app, banco_worker):
+def test_sem_access_configurado_no_worker_nada_e_servido(cf_app, banco_worker):
     c = cf_app.test_client()
-    c.environ_base["workers.env"] = _worker_env(banco_worker, ACCESS_PASSWORD=None)
-    for rota in ("/", "/api/clientes", "/api/meta", "/static/app.js"):
-        assert c.get(rota, headers=AUTH).status_code == 503, rota
+    c.environ_base["workers.env"] = _worker_env(banco_worker, CF_ACCESS_TEAM_DOMAIN=None, CF_ACCESS_AUD=None)
+    for rota in ("/", "/api/clientes", "/api/meta"):
+        assert c.get(rota, headers=ah.cabecalho()).status_code == 503, rota
 
 
 @pytest.mark.parametrize("rota,metodo", [("/", "get"), ("/api/clientes", "get"), ("/api/meta", "get"),
-                                         ("/api/clientes", "post"), ("/api/importacao/arquivo", "post"),
-                                         ("/api/importacao/previa", "post"), ("/api/importacao/confirmar", "post"),
-                                         ("/api/configuracoes/curva-abc", "put"), ("/static/app.js", "get")])
-def test_todas_as_rotas_exigem_login(cf_app, banco_worker, rota, metodo):
+                                         ("/api/clientes", "post"), ("/api/importacao/lote", "post"),
+                                         ("/api/importacao/arquivo", "post"), ("/api/importacao/previa", "post"),
+                                         ("/api/importacao/confirmar", "post"), ("/api/configuracoes/curva-abc", "put")])
+def test_sem_passar_pelo_access_todas_as_rotas_sao_bloqueadas(cf_app, banco_worker, rota, metodo):
     c = cf_app.test_client()
     c.environ_base["workers.env"] = _worker_env(banco_worker)
     res = getattr(c, metodo)(rota)
-    assert res.status_code == 401
-    assert res.headers["WWW-Authenticate"].startswith("Basic")
-    assert getattr(c, metodo)(rota, headers=basic("admin", "errada")).status_code == 401
-    assert getattr(c, metodo)(rota, headers=basic("outro", SENHA)).status_code == 401
+    assert res.status_code == 403 and "WWW-Authenticate" not in res.headers
+    assert getattr(c, metodo)(rota, headers=ah.cabecalho(ah.token(chave=ah.OUTRA_CHAVE))).status_code == 403
+    assert getattr(c, metodo)(rota, headers=ah.cabecalho(ah.token(aud=["outra"]))).status_code == 403
 
 
-def test_usuario_e_senha_vem_dos_secrets_do_worker(cf_app, banco_worker):
+def test_usuario_autorizado_vai_direto_para_a_tela_de_clientes(worker):
+    pagina = worker.get("/")
+    assert pagina.status_code == 200 and b"<html" in pagina.data.lower()
+    assert "WWW-Authenticate" not in pagina.headers
+    assert b"/static/style.css?v=cf" in pagina.data and b"/static/app.js?v=cf" in pagina.data
+    assert b"/static/planilhas.js?v=cf" in pagina.data   # leitura de planilhas no navegador
+
+
+def test_dominio_e_aud_vem_das_variaveis_do_worker(cf_app, banco_worker):
     c = cf_app.test_client()
-    c.environ_base["workers.env"] = _worker_env(banco_worker, ACCESS_USER="gestor", ACCESS_PASSWORD="outra-senha")
-    assert c.get("/api/clientes", headers=AUTH).status_code == 401
-    assert c.get("/api/clientes", headers=basic("gestor", "outra-senha")).status_code == 200
+    c.environ_base["workers.env"] = _worker_env(banco_worker, CF_ACCESS_AUD="outra-aplicacao")
+    assert c.get("/api/clientes", headers=ah.cabecalho()).status_code == 403
+    c.environ_base["workers.env"] = _worker_env(banco_worker, CF_ACCESS_TEAM_DOMAIN="https://" + ah.TIME + "/")
+    assert c.get("/api/clientes", headers=ah.cabecalho()).status_code == 200
 
 
 def test_healthz_aberto_e_sem_dados(cf_app, banco_worker):
@@ -201,23 +207,14 @@ def test_healthz_aberto_e_sem_dados(cf_app, banco_worker):
     assert res.status_code == 200 and res.json == {"status": "ok"}
 
 
-def test_arquivos_estaticos_vem_do_assets_depois_do_login(cf_app, banco_worker, monkeypatch):
-    pedidos = []
-
-    def falso(nome):
-        pedidos.append(nome)
-        return 200, b"body{}", "text/css; charset=utf-8"
-
-    monkeypatch.setattr("clientes.cloudflare._fetch_asset", falso)
+def test_estaticos_pela_rota_do_flask_continuam_disponiveis(cf_app, banco_worker, monkeypatch):
+    """Normalmente o Static Assets responde /static/* antes do Python; a rota fica como reserva."""
+    monkeypatch.setattr("clientes.cloudflare._fetch_asset", lambda nome: (200, b"body{}", "text/css"))
     c = cf_app.test_client()
     c.environ_base["workers.env"] = _worker_env(banco_worker)
-    assert c.get("/static/style.css").status_code == 401 and pedidos == []
-    res = c.get("/static/style.css", headers=AUTH)
-    assert res.status_code == 200 and res.data == b"body{}" and pedidos == ["style.css"]
-    assert res.headers["Cache-Control"] == "no-cache"
-    pagina = c.get("/", headers=AUTH)
-    assert pagina.status_code == 200
-    assert b"/static/style.css?v=cf" in pagina.data and b"/static/app.js?v=cf" in pagina.data
+    assert c.get("/static/style.css").status_code == 403
+    res = c.get("/static/style.css", headers=ah.cabecalho())
+    assert res.status_code == 200 and res.data == b"body{}"
 
 
 # ============================================================================ banco via Hyperdrive

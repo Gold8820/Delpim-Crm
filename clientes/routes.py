@@ -1,6 +1,8 @@
 """Rotas da aplicação (páginas e API JSON)."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import uuid
 from datetime import date, datetime, timedelta
@@ -327,6 +329,79 @@ def upload():
     return jsonify({"token": token, "arquivo": file.filename, **payload})
 
 
+MAX_JSON_UPLOAD = 40 * 1024 * 1024     # planilha lida no navegador, somando todos os lotes
+MAX_LOTE_LINHAS = 5000
+
+
+def _celula_valida(c) -> bool:
+    return c is None or isinstance(c, (str, int, float, bool)) or (
+        isinstance(c, dict) and len(c) == 1 and next(iter(c)) in ("$d", "$i", "$f", "$x")
+        and isinstance(next(iter(c.values())), str))
+
+
+@bp.post("/api/importacao/lote")
+def upload_batch():
+    """Planilha lida no navegador (static/planilhas.js), enviada em lotes de linhas.
+
+    1º lote (sem token): {arquivo, planilhas: [abas], aba, linhas: [[nº da linha, [células]]], final}
+    lotes seguintes:     {token, aba, linhas, final}
+    No último lote (final: true, com papel e linha_cabecalho), a resposta é igual à de /api/importacao/arquivo.
+    O servidor não abre arquivos Excel: só guarda o JSON (barato em CPU no Cloudflare Workers).
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return error("Dados inválidos.")
+    linhas = body.get("linhas")
+    if not isinstance(linhas, list) or len(linhas) > MAX_LOTE_LINHAS:
+        return error("Lote de linhas inválido.")
+    for item in linhas:
+        if not (isinstance(item, list) and len(item) == 2 and isinstance(item[0], int) and isinstance(item[1], list)
+                and all(_celula_valida(c) for c in item[1])):
+            return error("Lote de linhas inválido.")
+    try:
+        aba = int(body.get("aba") or 0)
+    except (TypeError, ValueError):
+        return error("Aba inválida.")
+    pedaco = (json.dumps({"s": aba, "rows": linhas}, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+    db = get_db()
+    token = body.get("token")
+    if not token:
+        nome = str(body.get("arquivo") or "")
+        if Path(nome).suffix.lower() not in (".xlsx", ".csv", ".xls"):
+            return error("Formato não aceito. Envie um arquivo Excel (.xlsx), CSV ou .xls (XML do Excel 2003).")
+        planilhas = body.get("planilhas") or []
+        if not isinstance(planilhas, list) or len(planilhas) > 200 or not all(isinstance(p, str) for p in planilhas):
+            return error("Lista de abas inválida.")
+        _cleanup_uploads(db)
+        token = uuid.uuid4().hex
+        meta = json.dumps({"arquivo": nome, "planilhas": planilhas}, ensure_ascii=False) + "\n"
+        _save_upload(db, token, ".json", meta.encode() + pedaco)
+    else:
+        if not isinstance(token, str) or not TOKEN_RE.match(token):
+            return error("O arquivo enviado expirou. Selecione o arquivo novamente.")
+        row = db.execute("UPDATE arquivos_importacao SET conteudo = conteudo || %s "
+                         "WHERE token = %s AND extensao = '.json' AND criado_em >= %s "
+                         "AND octet_length(conteudo) + %s <= %s RETURNING token",
+                         (pedaco, token, _upload_cutoff(), len(pedaco), MAX_JSON_UPLOAD)).fetchone()
+        if row is None:
+            db.rollback()
+            return error("O arquivo enviado expirou ou passou do limite de tamanho. Selecione o arquivo novamente.")
+    db.commit()
+    if not body.get("final"):
+        return jsonify({"token": token})
+    found = _find_upload(db, token)
+    try:
+        header_row = _header_row(body.get("linha_cabecalho"))
+        table = importer.read_table(found[0], found[1], None, header_row)
+        payload = _file_payload(db, _papel(body.get("papel")), table, header_row=header_row)
+    except importer.ImportFailure as exc:
+        _delete_upload(db, token)
+        db.commit()
+        return error(str(exc))
+    meta = json.loads(bytes(found[0]).split(b"\n", 1)[0])
+    return jsonify({"token": token, "arquivo": meta.get("arquivo"), **payload})
+
+
 @bp.post("/api/importacao/planilha")
 def reread():
     """Troca de aba ou de configuração: reaplica a associação sobre o mesmo arquivo."""
@@ -385,19 +460,69 @@ def _public(analysis: dict) -> dict:
     return {k: v for k, v in analysis.items() if not k.startswith("_")}
 
 
+# Plano da prévia reaproveitado na confirmação (evita refazer toda a análise e economiza CPU no Worker).
+# Só é usado se a confirmação tiver exatamente os mesmos parâmetros E o banco não tiver mudado desde a
+# prévia (impressão digital abaixo). Em qualquer outro caso, a análise é refeita, como sempre foi.
+
+def _params_key(body: dict) -> str:
+    chaves = ("clientes", "contratos", "chave", "mes_padrao", "substituir_vazios", "token", "mapeamento", "planilha",
+              "linha_cabecalho")
+    canon = json.dumps({k: body.get(k) for k in chaves}, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(canon.encode()).hexdigest()[:32]
+
+
+def _fingerprint(db) -> str:
+    row = db.execute(
+        "SELECT (SELECT count(*) || ':' || coalesce(max(id), 0) || ':' || coalesce(max(atualizado_em), '') FROM clientes) AS cli, "
+        "(SELECT count(*) || ':' || coalesce(max(atualizado_em), '') FROM contratos) AS ct, "
+        "(SELECT count(*) || ':' || coalesce(max(atualizado_em), '') FROM contrato_valores) AS cv, "
+        "(SELECT count(*) || ':' || coalesce(max(atualizado_em), '') FROM pagamentos_mensais) AS pg, "
+        "(SELECT string_agg(classificacao || minimo_centavos || '-' || coalesce(maximo_centavos, -1), ',' "
+        "ORDER BY classificacao) FROM curvas_abc) AS abc").fetchone()
+    return "|".join(str(v) for v in row.values())
+
+
+def _save_plan(db, key: str, analysis: dict) -> None:
+    data = json.dumps({"fp": _fingerprint(db), "plano": importer.plan_to_json(analysis)},
+                      ensure_ascii=False, default=str).encode()
+    db.execute("INSERT INTO arquivos_importacao (token, extensao, conteudo, criado_em) VALUES (%s, '.plano', %s, %s) "
+               "ON CONFLICT (token) DO UPDATE SET conteudo = excluded.conteudo, criado_em = excluded.criado_em",
+               ("p" + key[1:], data, repo.now()))
+    db.commit()
+
+
+def _load_plan(db, key: str) -> dict | None:
+    row = db.execute("SELECT conteudo FROM arquivos_importacao WHERE token = %s AND extensao = '.plano' "
+                     "AND criado_em >= %s", ("p" + key[1:], _upload_cutoff())).fetchone()
+    if row is None:
+        return None
+    saved = json.loads(bytes(row["conteudo"]))
+    if saved.get("fp") != _fingerprint(db):
+        return None
+    return importer.plan_from_json(saved["plano"])
+
+
 @bp.post("/api/importacao/previa")
 def preview():
     try:
-        _, analysis = _import_context()
+        body, analysis = _import_context()
     except importer.ImportFailure as exc:
         return error(str(exc))
+    try:
+        _save_plan(get_db(), _params_key(body), analysis)
+    except dbmod.Error:   # o plano é só uma otimização: sem ele, a confirmação refaz a análise
+        get_db().rollback()
+        current_app.logger.warning("Plano da prévia não foi guardado", exc_info=True)
     return jsonify(_public(analysis))
 
 
 @bp.post("/api/importacao/confirmar")
 def commit():
     try:
-        body, analysis = _import_context()
+        body = request.get_json(silent=True) or {}
+        analysis = _load_plan(get_db(), _params_key(body))
+        if analysis is None:
+            body, analysis = _import_context()
         result = importer.apply(get_db(), analysis, body.get("arquivo_clientes") if body.get("clientes") else None,
                                 body.get("arquivo_contratos"))
     except importer.ImportFailure as exc:

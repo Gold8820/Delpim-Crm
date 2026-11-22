@@ -22,6 +22,16 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 7 — sem login próprio (Cloudflare Access) + importação lida no navegador em lotes — 259 testes passando
+- **Branch:** `dev/access-importacao-navegador` (a versão publicada em produção está no commit `05e92e1`, branch `cloudflare-workers`).
+- **Acesso:** removidos o HTTP Basic, `ACCESS_PASSWORD`/`ACCESS_USER` e toda validação interna de usuário e senha. `clientes/acesso.py` confere o token do Cloudflare Access (RS256, `aud`, `iss`, `exp`/`nbf`; chaves em `https://<time>/cdn-cgi/access/certs`, cache de 1 h). `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` obrigatórias no Cloudflare e no Render (503 sem elas; 403 sem token válido). Local sem as variáveis: abre direto. `/healthz` aberto.
+- **Importação:** `static/planilhas.js` lê .xlsx/.xls(XML)/.csv no navegador com os mesmos valores do servidor (openpyxl/ElementTree/csv) e envia em lotes (`/api/importacao/lote`, até ~800 KB/4.000 linhas; guardado como JSON em `arquivos_importacao`, extensão `.json`). `importer.read_table` aceita `.json`. `/api/importacao/arquivo` continua (reserva).
+- **CPU:** `importer.apply` grava em lote (`jsonb_to_recordset`, 1,73 s → 0,08 s de CPU local para 1.150 clientes + 513 contratos); `analyze` carrega pagamentos numa consulta só; a confirmação reaproveita o plano da prévia (`arquivos_importacao`, extensão `.plano`) se os parâmetros forem os mesmos e a impressão digital do banco não mudou. CSS/JS servidos direto pelo Static Assets (`run_worker_first: ["/*", "!/static/*"]`).
+- **Testes novos:** `tests/test_planilhas_navegador.py` (equivalência JS x Python no Node + fluxo lotes→prévia→confirmação), `tests/acesso_helper.py` (chave RSA e JWT do Access sem rede); `test_implantacao.py` e `test_cloudflare.py` trocaram os testes de senha pelos do Access. `test_duas_planilhas::test_confirmacao_e_tudo_ou_nada` passou a injetar a falha em `importer.gravar_pagamentos` (a gravação agora é em lote).
+- **Publicado:** só a validação, `https://sistema-clientes-dev.pedrorozauro.workers.dev` (503 até o Access ser configurado). Produção (`sistema-clientes`) intocada.
+- **Pendente (painel da Cloudflare):** ativar o Cloudflare Access nos dois Workers, gravar domínio/AUD (`configurar.py acesso`), validar e só então `deploy --producao`; remover o Secret `ACCESS_PASSWORD` da produção depois.
+
+
 ### Rodada 6 — Cloudflare Workers (Python Workers + WSGI) + Hyperdrive + Supabase — 227 testes passando
 - **Base:** esta rodada partiu do `main` do GitHub (Rodada 5). A pasta local antiga (Rodada 4, 165 testes) foi copiada para `D:\sistema\backup-sistema-clientes-rodada4-local` antes de qualquer troca.
 - **Worker:** `src/worker.py` (`Default = wsgi.entrypoint(app)` com `create_app(cloudflare=True)`). Configuração em `cloudflare/` (`wrangler.jsonc`, `pyproject.toml`, `build.mjs`, `configurar.py`). Worker novo, `sistema-clientes`; o Worker antigo `delpim-crm` (proxy JS para o Render) não foi alterado.

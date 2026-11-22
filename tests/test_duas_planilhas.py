@@ -313,7 +313,8 @@ def test_confirmacao_e_tudo_ou_nada(client, app, monkeypatch, consulta):
     con = up(client, contratos_xlsx(), "k.xlsx", "contratos")
     def boom(*a, **k):
         raise psycopg.OperationalError("falha simulada")
-    monkeypatch.setattr(importer, "upsert_payment", boom)
+    # Falha no último passo da gravação (valores do mês, gravados em lote): nada pode ficar gravado.
+    monkeypatch.setattr(importer, "gravar_pagamentos", boom)
     res = client.post("/api/importacao/confirmar", json=payload(cli, con))
     assert res.status_code == 500
     assert contar(consulta, "clientes") == 0 and contar(consulta, "contratos") == 0

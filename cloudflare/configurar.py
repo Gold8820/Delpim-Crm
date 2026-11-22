@@ -7,8 +7,13 @@ Passos (rode da raiz do projeto):
     (alternativa: python cloudflare/configurar.py sql-senha  -> SQL para colar no SQL Editor do Supabase)
     python cloudflare/configurar.py hyperdrive    # cria o Hyperdrive (conexão Direct) e grava o id no wrangler.jsonc
     python cloudflare/configurar.py pacotes       # baixa as dependências Python (Python puro) para python_modules/
-    python cloudflare/configurar.py deploy        # publica o Worker (workers.dev)
-    npx wrangler secret put ACCESS_PASSWORD --config cloudflare/wrangler.jsonc   # senha de login do sistema
+    python cloudflare/configurar.py acesso dev <time>.cloudflareaccess.com <AUD>   # Cloudflare Access (validação)
+    python cloudflare/configurar.py deploy-dev    # publica a versão de VALIDAÇÃO (sistema-clientes-dev)
+    python cloudflare/configurar.py verificar     # testa ponta a ponta (WORKER_URL=...; Service Token do Access)
+    python cloudflare/configurar.py acesso producao <time>.cloudflareaccess.com <AUD>
+    python cloudflare/configurar.py deploy --producao   # só depois de validar: substitui a produção
+
+Não há usuário e senha no sistema: o acesso é feito pelo Cloudflare Access (e-mails autorizados).
 
 As credenciais do usuário app_clientes ficam em um arquivo FORA do repositório
 (padrão: ../credenciais-cloudflare.env, ao lado da pasta do projeto; outra pasta: CREDENCIAIS_CLOUDFLARE=...).
@@ -132,51 +137,62 @@ def pacotes() -> None:
     print(f"Dependências prontas em {destino}")
 
 
-def deploy() -> None:
+def _publicar(*extra) -> None:
     if '"id": "00000000000000000000000000000000"' in WRANGLER.read_text(encoding="utf-8"):
         sys.exit("Crie o Hyperdrive antes (python cloudflare/configurar.py hyperdrive).")
     if not (AQUI / "python_modules").is_dir():
         pacotes()
-    res = wrangler("deploy")
-    sys.exit(res.returncode)
+    sys.exit(wrangler("deploy", *extra).returncode)
 
 
-def _arquivo_credenciais() -> Path:
-    return Path(os.environ.get("CREDENCIAIS_CLOUDFLARE", RAIZ.parent / "credenciais-cloudflare.env"))
+def deploy_dev() -> None:
+    """Versão de validação: Worker sistema-clientes-dev (a produção não muda)."""
+    _publicar("--env", "dev")
 
 
-def senha_acesso() -> None:
-    """Senha do login do sistema (HTTP Basic): gera uma forte se ainda não houver, guarda no arquivo de
-    credenciais (fora do repositório) e grava no Secret ACCESS_PASSWORD do Worker. Nada é exibido."""
-    import secrets
-    import string
+def deploy() -> None:
+    """Produção (sistema-clientes). Exige --producao, para não substituir a produção por engano."""
+    if "--producao" not in sys.argv:
+        sys.exit("Para publicar na PRODUÇÃO use: python cloudflare/configurar.py deploy --producao "
+                 "(valide antes com deploy-dev).")
+    _publicar()
 
-    cred = credenciais()
-    if not cred.get("ACCESS_PASSWORD"):
-        senha = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(24))
-        with _arquivo_credenciais().open("a", encoding="utf-8") as f:
-            f.write("# Login do sistema no Worker (usuário: ACCESS_USER do wrangler.jsonc, padrão admin):\n"
-                    f"ACCESS_PASSWORD={senha}\n")
-        cred["ACCESS_PASSWORD"] = senha
-    res = wrangler("secret", "put", "ACCESS_PASSWORD", capturar=True, entrada=cred["ACCESS_PASSWORD"] + "\n")
-    saida = ((res.stdout or "") + (res.stderr or "")).replace(cred["ACCESS_PASSWORD"], "<oculta>")
-    if res.returncode != 0:
-        sys.exit("Falha ao gravar o Secret:\n" + saida)
-    print(f"Secret ACCESS_PASSWORD gravado no Worker. A senha está em {_arquivo_credenciais()} (linha ACCESS_PASSWORD).")
+
+def acesso() -> None:
+    """Grava no wrangler.jsonc o domínio do time e o AUD da aplicação do Cloudflare Access (não são segredos)."""
+    if len(sys.argv) != 5 or sys.argv[2] not in ("dev", "producao"):
+        sys.exit("Uso: python cloudflare/configurar.py acesso dev|producao <time>.cloudflareaccess.com <AUD>")
+    ambiente, dominio, aud = sys.argv[2], sys.argv[3].removeprefix("https://").strip("/"), sys.argv[4].strip()
+    if not re.fullmatch(r"[a-z0-9-]+\.cloudflareaccess\.com", dominio) or not re.fullmatch(r"[0-9a-f]{64}", aud):
+        sys.exit("Domínio esperado: <time>.cloudflareaccess.com; AUD: 64 caracteres hexadecimais (Application Audience Tag).")
+    texto = WRANGLER.read_text(encoding="utf-8")
+    novo = f'"vars": {{ "CF_ACCESS_TEAM_DOMAIN": "{dominio}", "CF_ACCESS_AUD": "{aud}" }}'
+    padrao = r'"vars": \{ "CF_ACCESS_TEAM_DOMAIN": "[^"]*", "CF_ACCESS_AUD": "[^"]*" \}'
+    ocorrencias = list(re.finditer(padrao, texto))   # 1ª = produção, 2ª = env.dev
+    alvo = ocorrencias[1] if ambiente == "dev" else ocorrencias[0]
+    texto = texto[:alvo.start()] + novo + texto[alvo.end():]
+    WRANGLER.write_text(texto, encoding="utf-8", newline="\n")
+    print(f"Cloudflare Access ({ambiente}) gravado no wrangler.jsonc. Publique de novo para valer.")
 
 
 def verificar() -> None:
-    """Roda scripts/verificar_worker.py contra o Worker publicado, com a senha do arquivo de credenciais."""
+    """Roda scripts/verificar_worker.py contra um Worker publicado (WORKER_URL).
+
+    Para passar pelo Cloudflare Access, defina CF_ACCESS_CLIENT_ID e CF_ACCESS_CLIENT_SECRET (Service Token
+    incluído na política da aplicação) ou coloque-os no arquivo de credenciais (fora do repositório)."""
     cred = credenciais()
-    url = os.environ.get("WORKER_URL") or sys.exit("Defina WORKER_URL (ex.: https://sistema-clientes.<conta>.workers.dev).")
-    env = {**os.environ, "ACCESS_PASSWORD": cred["ACCESS_PASSWORD"], "PYTHONIOENCODING": "utf-8"}
-    res = subprocess.run([sys.executable, str(RAIZ / "scripts" / "verificar_worker.py"), url], env=env)
+    url = os.environ.get("WORKER_URL") or sys.exit("Defina WORKER_URL (ex.: https://sistema-clientes-dev.<conta>.workers.dev).")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    for chave in ("CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"):
+        if cred.get(chave) and not env.get(chave):
+            env[chave] = cred[chave]
+    res = subprocess.run([sys.executable, str(RAIZ / "scripts" / "verificar_worker.py"), url, "--exige-bloqueio"], env=env)
     sys.exit(res.returncode)
 
 
 if __name__ == "__main__":
     passos = {"senha-banco": senha_banco, "sql-senha": sql_senha, "hyperdrive": hyperdrive, "pacotes": pacotes,
-              "deploy": deploy, "senha-acesso": senha_acesso, "verificar": verificar}
-    if len(sys.argv) != 2 or sys.argv[1] not in passos:
+              "acesso": acesso, "deploy-dev": deploy_dev, "deploy": deploy, "verificar": verificar}
+    if len(sys.argv) < 2 or sys.argv[1] not in passos:
         sys.exit(__doc__)
     passos[sys.argv[1]]()

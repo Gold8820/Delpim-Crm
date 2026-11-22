@@ -7,7 +7,7 @@
   // (Esta pasta cloudflare/ existe porque o pywrangler não aceita um requirements.txt ao lado do
   // pyproject.toml, e o requirements.txt da raiz continua servindo ao `python run.py` e ao Render.)
   "main": "build/worker.py",
-  "build": { "command": "node build.mjs", "watch_dir": ["../src", "../clientes", "../templates"] },
+  "build": { "command": "node build.mjs", "watch_dir": ["../src", "../clientes", "../templates", "../static"] },
   "compatibility_date": "2026-11-20",
   "compatibility_flags": ["python_workers"],
   "workers_dev": true,
@@ -15,12 +15,13 @@
   "rules": [
     { "type": "Data", "globs": ["templates/**/*.html"], "fallthrough": false }
   ],
-  // Workers Static Assets: pasta static/ (CSS e JS). Toda requisição passa primeiro pelo Worker,
-  // para que os arquivos estáticos também exijam login.
+  // Workers Static Assets: CSS e JS (copiados de static/ pelo build) respondidos direto em /static/*,
+  // sem passar pelo Python (economiza CPU). Todo o resto passa pelo Worker. O endereço inteiro, inclusive
+  // /static/*, fica atrás do Cloudflare Access (login com e-mail da empresa).
   "assets": {
-    "directory": "../static",
+    "directory": "./build/public",
     "binding": "ASSETS",
-    "run_worker_first": true
+    "run_worker_first": ["/*", "!/static/*"]
   },
   // Supabase (conexão Direct) via Hyperdrive. O id é o da configuração criada na Cloudflare.
   // Desenvolvimento local: defina CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE
@@ -28,10 +29,24 @@
   "hyperdrive": [
     { "binding": "HYPERDRIVE", "id": "2a377c09a7ae4baaad3f27307f560f31" }
   ],
-  // Usuário do login (a senha fica no Secret ACCESS_PASSWORD: `npx wrangler secret put ACCESS_PASSWORD`).
-  "vars": { "ACCESS_USER": "admin" },
+  // Cloudflare Access (login com e-mail da empresa, fora da aplicação). Não são segredos.
+  // Preencha com os dados da aplicação do Access (Zero Trust > Access > Applications):
+  //   CF_ACCESS_TEAM_DOMAIN = <time>.cloudflareaccess.com   CF_ACCESS_AUD = Application Audience (AUD) Tag
+  // Vazios, o Worker não serve nada (503): nunca fica aberto por engano.
+  "vars": { "CF_ACCESS_TEAM_DOMAIN": "", "CF_ACCESS_AUD": "" },
   // Roda o Worker perto do banco (Supabase em AWS us-east-2): cada requisição faz várias consultas,
   // e assim cada ida e volta ao banco leva poucos milissegundos em vez de ~150 ms.
   "placement": { "region": "aws:us-east-2" },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Ambiente de validação: outro Worker (sistema-clientes-dev.<conta>.workers.dev), com a sua própria
+  // aplicação do Cloudflare Access. Publicado com `--env dev`; a produção (sistema-clientes) não muda.
+  "env": {
+    "dev": {
+      "name": "sistema-clientes-dev",
+      "hyperdrive": [
+        { "binding": "HYPERDRIVE", "id": "2a377c09a7ae4baaad3f27307f560f31" }
+      ],
+      "vars": { "CF_ACCESS_TEAM_DOMAIN": "", "CF_ACCESS_AUD": "" }
+    }
+  }
 }

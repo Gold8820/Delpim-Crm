@@ -212,6 +212,8 @@ class Row(dict):
 
     def __getitem__(self, key):
         if isinstance(key, int):
+            if len(self) == 1 or key == 0:   # caso comum (COUNT(*), MAX(...), row[0]): sem montar lista
+                return next(iter(self.values()))
             return list(self.values())[key]
         return super().__getitem__(key)
 

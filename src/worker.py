@@ -3,8 +3,9 @@
 A mesma aplicação Flask do `python run.py`, criada no modo Cloudflare:
   - banco pelo binding HYPERDRIVE (uma conexão por requisição, fechada no fim dela);
   - sem alteração de esquema na inicialização (migrações: scripts/migrar_schema.py);
-  - login obrigatório (Secrets ACCESS_USER / ACCESS_PASSWORD);
-  - arquivos estáticos pelo Workers Static Assets (binding ASSETS).
+  - sem login próprio: o Cloudflare Access fica na frente e a aplicação confere o token dele
+    (variáveis CF_ACCESS_TEAM_DOMAIN e CF_ACCESS_AUD; sem elas, nada é servido);
+  - CSS/JS pelo Workers Static Assets.
 """
 # Importados aqui, no início, para entrarem no "memory snapshot" que a Cloudflare grava no deploy.
 # Sem isso, cada nova instância importaria esses módulos na primeira requisição (CPU cobrada nela,
@@ -15,7 +16,7 @@ import defusedxml.ElementTree  # noqa: F401  leitura segura de .xls (XML)
 from workers import wsgi
 
 from clientes import create_app
-from clientes import cloudflare, configs, contracts, importer  # noqa: F401
+from clientes import acesso, cloudflare, configs, contracts, importer  # noqa: F401
 
 app = create_app(cloudflare=True)
 

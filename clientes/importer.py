@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 import zipfile
 from dataclasses import dataclass, field
@@ -19,7 +20,7 @@ from .classification import classify
 from .contracts import TIPOS, process as process_contracts
 from .repository import (find_by_cnpj, find_by_codigo, find_contract, insert_client, insert_contract,
                          load_faixas, now, update_client, update_contract, upsert_contract_value, upsert_payment)
-from .validation import (CLIENT_FIELDS, CONTRACT_LABELS, FIELD_LABELS, display_name, format_cnpj,
+from .validation import (search_blob, CLIENT_FIELDS, CONTRACT_LABELS, FIELD_LABELS, display_name, format_cnpj,
                          format_money, is_blank, key_cnpj, key_codigo, merge_note, month_label, normalize,
                          parse_month, strip_accents, to_text)
 
@@ -43,11 +44,61 @@ def read_table(data: bytes, ext: str, sheet: str | None = None, header_row: int 
     `header_row` (1 = primeira linha da planilha) força a linha do cabeçalho; sem ele, o cabeçalho é
     a primeira linha não vazia (linhas vazias no início são ignoradas).
     """
+    if ext == ".json":
+        return _read_rows_json(data, sheet, header_row)
     if ext == ".csv":
         return _read_csv(data, header_row)
     if ext == ".xls":
         return _read_xls(data, sheet, header_row)
     return _read_xlsx(data, sheet, header_row)
+
+
+# --------------------------------------------------------------------------- planilha lida no navegador
+# O navegador (static/planilhas.js) lê o .xlsx/.xls/.csv e envia as linhas em lotes. O servidor guarda
+# o JSON (uma linha de texto por lote) e só faz o trabalho barato: escolher a aba e achar o cabeçalho.
+# Formato: 1ª linha {"arquivo", "planilhas": [nomes]}; depois {"s": índice da aba, "rows": [[linha, [células]]]}.
+# Datas vêm como {"$d": "AAAA-MM-DDTHH:MM:SS"} e voltam a ser datetime (como no openpyxl).
+
+def _json_cell(value):
+    """Datas e números que não cabem com exatidão no JavaScript vêm como texto marcado."""
+    if not isinstance(value, dict):
+        return value
+    if "$d" in value:
+        try:
+            return datetime.fromisoformat(str(value["$d"])[:19])
+        except ValueError:
+            return str(value["$d"])
+    texto = str(next(iter(value.values()), ""))
+    try:
+        if "$i" in value:                     # .xlsx, número sem casas decimais (int do openpyxl)
+            return int(texto)
+        if "$f" in value:                     # .xlsx, número com casas decimais ou expoente (float do openpyxl)
+            return float(texto)
+        if "$x" in value:                     # .xls (XML): float e, se for inteiro, int
+            numero = float(texto)
+            return int(numero) if numero.is_integer() else numero
+    except (ValueError, OverflowError):
+        return texto
+    return texto
+
+
+def _read_rows_json(data: bytes, sheet: str | None, header_row: int | None) -> dict:
+    lines = bytes(data).decode("utf-8").splitlines()
+    if not lines:
+        raise ImportFailure("A planilha está vazia.")
+    meta = json.loads(lines[0])
+    names = [str(n) for n in meta.get("planilhas") or []]
+    index = names.index(sheet) if sheet in names else 0
+    rows: list[tuple[int, list]] = []
+    for text in lines[1:]:
+        part = json.loads(text)
+        if int(part.get("s", 0)) != index:
+            continue
+        for line, cells in part.get("rows", []):
+            rows.append((int(line), [_json_cell(c) for c in cells]))
+    rows.sort(key=lambda r: r[0])
+    # CSV não tem abas: planilhas = [] e aba = None, igual à leitura do CSV no servidor.
+    return _build(iter(rows), sheets=names, sheet=names[index] if names else None, header_row=header_row)
 
 
 def _read_xls(data: bytes, sheet: str | None, header_row: int | None) -> dict:
@@ -455,8 +506,10 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
     mapped = {k: v for k, v in mapping.items() if v is not None}
     merge_fields = [f for f in CLIENT_FIELDS if f in mapped and f != "codigo"]
 
-    db_by_code = {r["codigo"].lower(): dict(r) for r in db.execute("SELECT * FROM clientes")}
+    db_by_code = {r["codigo"].lower(): dict(r) for r in db.execute(
+        f"SELECT id, {', '.join(CLIENT_FIELDS)} FROM clientes")}
     db_by_cnpj = {r["cnpj"]: r for r in db_by_code.values() if r["cnpj"]}
+    all_payments: dict[int, dict] | None = None   # carregados de uma vez, na primeira consulta (sem 1 SELECT por cliente)
     ent_by_code: dict[str, _Entity] = {}
     ent_by_cnpj: dict[str, _Entity] = {}
     entities: list[_Entity] = []
@@ -486,10 +539,14 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
         return ent_by_cnpj.get(cnpj) or (from_db(db_by_cnpj[cnpj]) if cnpj in db_by_cnpj else None)
 
     def db_payments(entity: _Entity) -> dict:
+        nonlocal all_payments
         if entity._db_payments is None:
-            rows = db.execute("SELECT mes_referencia, valor_centavos FROM pagamentos_mensais "
-                              "WHERE cliente_id = %s", (entity.db_id,)).fetchall() if entity.db_id else []
-            entity._db_payments = {r[0]: r[1] for r in rows}
+            if all_payments is None:
+                all_payments = {}
+                for cliente_id, mes, cents in db.execute(
+                        "SELECT cliente_id, mes_referencia, valor_centavos FROM pagamentos_mensais"):
+                    all_payments.setdefault(cliente_id, {})[mes] = cents
+            entity._db_payments = dict(all_payments.get(entity.db_id, {})) if entity.db_id else {}
         return entity._db_payments
 
     out_rows: list[dict] = []
@@ -723,34 +780,148 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
 
 # --------------------------------------------------------------------------- gravação
 
+def _json(rows: list[dict]) -> str:
+    return json.dumps(rows, ensure_ascii=False, default=str)
+
+
+_CLIENT_COLS = ", ".join(f"{f} text" for f in CLIENT_FIELDS)
+_CONTRACT_COLS = ("numero text, produto text, situacao text, data_inicio text, data_fim text, "
+                  "parcela_centavos bigint, observacoes text")
+
+
+def gravar_pagamentos(db, pagamentos: list[dict], origem: str, stamp: str) -> None:
+    """Valor do mês de cada cliente, em lote. Se já existir, SUBSTITUI (nunca soma). Não faz commit."""
+    db.execute(
+        "INSERT INTO pagamentos_mensais "
+        "(cliente_id, mes_referencia, valor_centavos, classificacao, origem, criado_em, atualizado_em) "
+        "SELECT cliente_id, mes, valor, classe, %s, %s, %s FROM jsonb_to_recordset(%s::jsonb) "
+        "AS v(cliente_id bigint, mes text, valor bigint, classe text) "
+        "ON CONFLICT (cliente_id, mes_referencia) DO UPDATE SET "
+        "valor_centavos = excluded.valor_centavos, classificacao = excluded.classificacao, "
+        "origem = excluded.origem, atualizado_em = excluded.atualizado_em",
+        (origem, stamp, stamp, _json(pagamentos)))
+
+
+def plan_to_json(analysis: dict) -> dict:
+    """Só o que `apply` precisa para gravar (o plano calculado na prévia), em formato JSON."""
+    entidades = []
+    for e in analysis["_entidades"]:
+        entidades.append({
+            "is_new": e.is_new, "db_id": e.db_id, "fields_changed": e.fields_changed,
+            "values": {k: e.values.get(k) for k in CLIENT_FIELDS}, "pending": e.pending,
+            "recs": [{"numero": r.numero, "is_new": r.is_new, "db_id": r.db_id, "fields_changed": r.fields_changed,
+                      "values": {k: r.values.get(k) for k in ("produto", "situacao", "data_inicio", "data_fim",
+                                                              "parcela_centavos", "observacoes")},
+                      "changed_months": r.changed_months} for r in e.contract_recs]})
+    return {"resumo": analysis["resumo"], "entidades": entidades}
+
+
+def plan_from_json(data: dict) -> dict:
+    entidades = []
+    for item in data["entidades"]:
+        e = SimpleNamespace(is_new=item["is_new"], db_id=item["db_id"], fields_changed=item["fields_changed"],
+                            values=item["values"], pending=item["pending"], contract_recs=[])
+        for r in item["recs"]:
+            rec = SimpleNamespace(numero=r["numero"], is_new=r["is_new"], db_id=r["db_id"], entity=e,
+                                  fields_changed=r["fields_changed"], values=r["values"],
+                                  changed_months=r["changed_months"])
+            rec.dirty = rec.is_new or rec.fields_changed or bool(rec.changed_months)
+            e.contract_recs.append(rec)
+        entidades.append(e)
+    return {"resumo": data["resumo"], "_entidades": entidades}
+
+
 def apply(db, analysis: dict, filename: str, filename_contracts: str | None = None) -> dict:
-    """Grava o resultado de `analyze` em uma única transação (tudo ou nada)."""
+    """Grava o resultado de `analyze` em uma única transação (tudo ou nada).
+
+    A gravação é feita em poucos comandos SQL em lote (jsonb_to_recordset), e não com um comando por
+    linha: o trabalho fica no PostgreSQL e o Python gasta pouca CPU (limite do Cloudflare Workers).
+    As regras são as mesmas da gravação linha a linha (o plano já vem pronto da análise).
+    """
     summary = analysis["resumo"]
     origin = "contratos" if summary.get("tem_contratos") else "importacao"
-    payments_written = contracts_written = 0
     faixas = load_faixas(db)
+    stamp = now()
     changed_msg = "Os dados mudaram desde a prévia (registro já cadastrado por outra pessoa). Refaça a importação."
+    entities = analysis["_entidades"]
+    novos = [e for e in entities if e.is_new]
+    alterados = [e for e in entities if not e.is_new and e.fields_changed]
     try:
-        for entity in analysis["_entidades"]:
-            if entity.is_new:
-                if find_by_codigo(db, entity.values["codigo"]) or find_by_cnpj(db, entity.values["cnpj"]):
-                    raise ImportFailure(changed_msg)
-                entity.db_id = insert_client(db, entity.values)
-            elif entity.fields_changed:
-                update_client(db, entity.db_id, entity.values)
-            for rec in entity.contract_recs:
-                if rec.is_new:
-                    if find_contract(db, rec.numero):
-                        raise ImportFailure(changed_msg)
-                    rec.db_id = insert_contract(db, entity.db_id, rec.numero, rec.values)
-                elif rec.fields_changed:
-                    update_contract(db, rec.db_id, rec.values)
-                for month, cents in rec.changed_months.items():
-                    upsert_contract_value(db, rec.db_id, month, cents)
-                contracts_written += rec.dirty
-            for month, cents in entity.pending.items():
-                upsert_payment(db, entity.db_id, month, cents, origin, faixas)
-                payments_written += 1
+        # 1) Clientes novos: ninguém pode ter cadastrado o mesmo código/CNPJ depois da prévia.
+        if novos:
+            codigos = [e.values["codigo"].lower() for e in novos if e.values.get("codigo")]
+            cnpjs = [e.values["cnpj"] for e in novos if e.values.get("cnpj")]
+            if db.execute("SELECT 1 FROM clientes WHERE lower(codigo) = ANY(%s::text[]) OR cnpj = ANY(%s::text[]) LIMIT 1",
+                          (codigos, cnpjs)).fetchone():
+                raise ImportFailure(changed_msg)
+            dados = [{**{k: e.values.get(k) for k in CLIENT_FIELDS}, "busca": search_blob(e.values)} for e in novos]
+            cols = ", ".join(CLIENT_FIELDS)
+            ids = db.execute(
+                f"INSERT INTO clientes ({cols}, busca, criado_em, atualizado_em) "
+                f"SELECT {cols}, busca, %s, %s FROM jsonb_to_recordset(%s::jsonb) AS v({_CLIENT_COLS}, busca text) "
+                "RETURNING id, lower(codigo)", (stamp, stamp, _json(dados))).fetchall()
+            por_codigo = {codigo: cid for cid, codigo in ids}
+            for e in novos:
+                e.db_id = por_codigo[e.values["codigo"].lower()]
+        # 2) Clientes existentes com dados alterados.
+        if alterados:
+            dados = [{**{k: e.values.get(k) for k in CLIENT_FIELDS}, "busca": search_blob(e.values), "id": e.db_id}
+                     for e in alterados]
+            sets = ", ".join(f"{k} = v.{k}" for k in list(CLIENT_FIELDS) + ["busca"])
+            db.execute(f"UPDATE clientes c SET {sets}, atualizado_em = %s "
+                       f"FROM jsonb_to_recordset(%s::jsonb) AS v(id bigint, {_CLIENT_COLS}, busca text) "
+                       "WHERE c.id = v.id", (stamp, _json(dados)))
+
+        # 3) Contratos.
+        recs = [r for e in entities for r in e.contract_recs]
+        contracts_written = sum(1 for r in recs if r.dirty)
+
+        def contrato(rec) -> dict:
+            v = rec.values
+            return {"numero": rec.numero, "produto": v.get("produto"), "situacao": v.get("situacao"),
+                    "data_inicio": v.get("data_inicio"), "data_fim": v.get("data_fim"),
+                    "parcela_centavos": v.get("parcela_centavos"), "observacoes": v.get("observacoes")}
+
+        novos_ct = [r for r in recs if r.is_new]
+        if novos_ct:
+            numeros = [r.numero.lower() for r in novos_ct]
+            if db.execute("SELECT 1 FROM contratos WHERE lower(numero) = ANY(%s::text[]) LIMIT 1", (numeros,)).fetchone():
+                raise ImportFailure(changed_msg)
+            dados = [{**contrato(r), "cliente_id": r.entity.db_id} for r in novos_ct]
+            ids = db.execute(
+                "INSERT INTO contratos (cliente_id, numero, produto, situacao, data_inicio, data_fim, "
+                "valor_parcela_futuro_centavos, observacoes, criado_em, atualizado_em) "
+                "SELECT cliente_id, numero, produto, situacao, data_inicio, data_fim, parcela_centavos, observacoes, "
+                f"%s, %s FROM jsonb_to_recordset(%s::jsonb) AS v(cliente_id bigint, {_CONTRACT_COLS}) "
+                "RETURNING id, lower(numero)", (stamp, stamp, _json(dados))).fetchall()
+            por_numero = {numero: cid for cid, numero in ids}
+            for r in novos_ct:
+                r.db_id = por_numero[r.numero.lower()]
+        alt_ct = [r for r in recs if not r.is_new and r.fields_changed]
+        if alt_ct:
+            dados = [{**contrato(r), "id": r.db_id} for r in alt_ct]
+            db.execute(
+                "UPDATE contratos c SET produto = v.produto, situacao = v.situacao, data_inicio = v.data_inicio, "
+                "data_fim = v.data_fim, valor_parcela_futuro_centavos = v.parcela_centavos, "
+                "observacoes = v.observacoes, atualizado_em = %s "
+                f"FROM jsonb_to_recordset(%s::jsonb) AS v(id bigint, {_CONTRACT_COLS}) WHERE c.id = v.id",
+                (stamp, _json(dados)))
+        valores = [{"contrato_id": r.db_id, "mes": m, "valor": c} for r in recs for m, c in r.changed_months.items()]
+        if valores:   # valor do mês do contrato: SUBSTITUI o anterior (nunca soma)
+            db.execute(
+                "INSERT INTO contrato_valores (contrato_id, mes_referencia, valor_centavos, atualizado_em) "
+                "SELECT contrato_id, mes, valor, %s FROM jsonb_to_recordset(%s::jsonb) "
+                "AS v(contrato_id bigint, mes text, valor bigint) "
+                "ON CONFLICT (contrato_id, mes_referencia) DO UPDATE SET "
+                "valor_centavos = excluded.valor_centavos, atualizado_em = excluded.atualizado_em",
+                (stamp, _json(valores)))
+
+        # 4) Valor do mês do cliente e classificação (Curva ABC vigente, pelo valor pago no mês).
+        pagamentos = [{"cliente_id": e.db_id, "mes": m, "valor": c, "classe": classify(c, faixas)}
+                      for e in entities for m, c in e.pending.items()]
+        payments_written = len(pagamentos)
+        if pagamentos:
+            gravar_pagamentos(db, pagamentos, origin, stamp)
         db.execute(
             "INSERT INTO importacoes (arquivo, arquivo_contratos, realizada_em, linhas_lidas, clientes_criados, "
             "clientes_atualizados, clientes_sem_alteracao, linhas_rejeitadas, pagamentos_gravados, "

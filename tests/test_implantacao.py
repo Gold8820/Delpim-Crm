@@ -1,6 +1,5 @@
-"""Preparação para hospedagem (Render + Supabase): armazenamento no banco, acesso protegido,
+"""Preparação para hospedagem (Cloudflare/Render + Supabase): armazenamento no banco, acesso pelo Cloudflare Access,
 verificação de saúde, proteção do XML de importação e higiene do repositório (segredos e .gitignore)."""
-import base64
 import io
 import re
 from pathlib import Path
@@ -8,10 +7,10 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from clientes import create_app
+import acesso_helper as ah
+from clientes import acesso, create_app
 
 ROOT = Path(__file__).resolve().parent.parent
-SENHA_TESTE = "senha-de-teste-123"
 
 
 def xlsx_bytes(rows):
@@ -27,11 +26,6 @@ def xlsx_bytes(rows):
 def upload(client, content, name, papel="clientes"):
     return client.post("/api/importacao/arquivo", data={"arquivo": (io.BytesIO(content), name), "papel": papel},
                        content_type="multipart/form-data")
-
-
-def basic(usuario: str, senha: str) -> dict:
-    token = base64.b64encode(f"{usuario}:{senha}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
 
 
 # ============================================================================ armazenamento no banco
@@ -96,52 +90,102 @@ def test_xml_com_entidades_e_recusado_sem_ler_o_sistema(client, conteudo):
     assert "/etc/passwd" not in res.get_data(as_text=True)
 
 
-# ============================================================================ acesso protegido
+# ============================================================================ acesso (Cloudflare Access, sem login próprio)
+
+@pytest.fixture(autouse=True)
+def _cache_limpo():
+    acesso._chaves.update(time=None, lidas_em=0.0, chaves={})
+    yield
+
 
 @pytest.fixture()
-def app_protegido(pg_url, schema, monkeypatch):
+def app_access(pg_url, schema, monkeypatch):
     monkeypatch.delenv("RENDER", raising=False)
-    monkeypatch.setenv("ACCESS_PASSWORD", SENHA_TESTE)
-    monkeypatch.setenv("ACCESS_USER", "gestor")
-    return create_app(pg_url, schema=schema)
+    monkeypatch.setenv("CF_ACCESS_TEAM_DOMAIN", ah.TIME)
+    monkeypatch.setenv("CF_ACCESS_AUD", ah.AUD)
+    app = create_app(pg_url, schema=schema)
+    app.config["CF_ACCESS_JWKS"] = ah.jwks()
+    return app
 
 
-def test_sem_credenciais_o_sistema_responde_401(app_protegido):
-    c = app_protegido.test_client()
-    res = c.get("/api/clientes")
-    assert res.status_code == 401
-    assert res.headers["WWW-Authenticate"].startswith("Basic")
-    assert c.get("/").status_code == 401
+def test_sem_login_proprio_a_pagina_principal_abre_direto(app, monkeypatch):
+    """Não há mais tela/prompt de usuário e senha: ACCESS_PASSWORD não tem efeito algum."""
+    monkeypatch.setenv("ACCESS_PASSWORD", "qualquer")
+    c = app.test_client()
+    res = c.get("/")
+    assert res.status_code == 200 and b"<html" in res.data.lower()
+    assert "WWW-Authenticate" not in res.headers
+    assert c.get("/api/clientes").status_code == 200
 
 
-def test_credenciais_erradas_sao_recusadas(app_protegido):
-    c = app_protegido.test_client()
-    assert c.get("/api/clientes", headers=basic("gestor", "errada")).status_code == 401
-    assert c.get("/api/clientes", headers=basic("outro", SENHA_TESTE)).status_code == 401
+def test_com_access_requisicao_sem_token_e_bloqueada(app_access):
+    c = app_access.test_client()
+    for rota in ("/", "/api/clientes", "/api/meta", "/api/importacao/configuracoes"):
+        res = c.get(rota)
+        assert res.status_code == 403, rota
+        assert "WWW-Authenticate" not in res.headers   # nada de pedir senha no navegador
+    assert c.post("/api/clientes", json={"codigo": "X", "razao_social": "Y"}).status_code == 403
 
 
-def test_credenciais_corretas_liberam_o_acesso(app_protegido):
-    c = app_protegido.test_client()
-    assert c.get("/api/clientes", headers=basic("gestor", SENHA_TESTE)).status_code == 200
+def test_com_access_token_valido_vai_direto_para_a_tela_de_clientes(app_access):
+    c = app_access.test_client()
+    pagina = c.get("/", headers=ah.cabecalho())
+    assert pagina.status_code == 200 and b"<html" in pagina.data.lower()
+    assert c.get("/api/clientes", headers=ah.cabecalho()).status_code == 200
 
 
-def test_healthz_responde_sem_senha_e_sem_dados(app_protegido):
-    res = app_protegido.test_client().get("/healthz")
+def test_cookie_do_access_tambem_e_aceito(app_access):
+    c = app_access.test_client()
+    c.set_cookie("CF_Authorization", ah.token())
+    assert c.get("/api/clientes").status_code == 200
+
+
+@pytest.mark.parametrize("tok", [
+    "nao.e.um-jwt",
+    ah.token(chave=ah.OUTRA_CHAVE),                  # assinatura de outra chave (forjado)
+    ah.token(aud=["outra-aplicacao"]),               # token de outra aplicação do Access
+    ah.token(iss="https://outro-time.cloudflareaccess.com"),
+    ah.token(exp=1),                                 # expirado
+    ah.token(nbf=4_000_000_000),                     # ainda não vale
+], ids=["malformado", "assinatura_forjada", "outra_aud", "outro_emissor", "expirado", "futuro"])
+def test_token_invalido_e_recusado_pelo_access(app_access, tok):
+    assert app_access.test_client().get("/api/clientes", headers=ah.cabecalho(tok)).status_code == 403
+
+
+def test_token_com_algoritmo_none_e_recusado(app_access):
+    import base64, json
+    b64 = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
+    falso = f"{b64({'alg': 'none', 'kid': 'chave-1'})}.{b64({'aud': [ah.AUD], 'iss': 'https://' + ah.TIME, 'exp': 4_000_000_000})}."
+    assert app_access.test_client().get("/api/clientes", headers=ah.cabecalho(falso)).status_code == 403
+
+
+def test_healthz_aberto_sem_dados(app_access):
+    res = app_access.test_client().get("/healthz")
     assert res.status_code == 200 and res.json == {"status": "ok"}
 
 
-def test_render_sem_senha_nao_inicia(pg_url, schema, monkeypatch):
+def test_render_sem_access_nao_inicia(pg_url, schema, monkeypatch):
     monkeypatch.setenv("RENDER", "true")
-    monkeypatch.delenv("ACCESS_PASSWORD", raising=False)
-    with pytest.raises(RuntimeError, match="ACCESS_PASSWORD"):
+    monkeypatch.delenv("CF_ACCESS_TEAM_DOMAIN", raising=False)
+    monkeypatch.delenv("CF_ACCESS_AUD", raising=False)
+    with pytest.raises(RuntimeError, match="CF_ACCESS"):
         create_app(pg_url, schema=schema)
 
 
-def test_render_com_senha_inicia(pg_url, schema, monkeypatch):
+def test_render_com_access_inicia_e_bloqueia_sem_token(pg_url, schema, monkeypatch):
     monkeypatch.setenv("RENDER", "true")
-    monkeypatch.setenv("ACCESS_PASSWORD", SENHA_TESTE)
+    monkeypatch.setenv("CF_ACCESS_TEAM_DOMAIN", ah.TIME)
+    monkeypatch.setenv("CF_ACCESS_AUD", ah.AUD)
     app = create_app(pg_url, schema=schema)
-    assert app.test_client().get("/api/clientes").status_code == 401
+    app.config["CF_ACCESS_JWKS"] = ah.jwks()
+    assert app.test_client().get("/api/clientes").status_code == 403
+
+
+def test_verificacao_rs256_confere_assinaturas():
+    msg = b"cabecalho.corpo"
+    assert acesso.verificar_rs256(ah.CHAVE.n, ah.CHAVE.e, msg, ah.CHAVE.assinar(msg))
+    assert not acesso.verificar_rs256(ah.CHAVE.n, ah.CHAVE.e, msg + b"x", ah.CHAVE.assinar(msg))
+    assert not acesso.verificar_rs256(ah.CHAVE.n, ah.CHAVE.e, msg, ah.OUTRA_CHAVE.assinar(msg))
 
 
 def test_sem_database_url_falha_com_mensagem_clara(monkeypatch):

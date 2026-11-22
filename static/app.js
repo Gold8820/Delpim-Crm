@@ -557,7 +557,7 @@ function dropHtml(papel) {
       <div class="notice info">Planilha única: a mesma planilha é lida como clientes e como contratos.</div></div>`;
   }
   if (imp.busy[papel]) {
-    return `<div class="drop-card"><h3>${r.titulo}</h3><div class="dropzone"><strong><span class="spinner"></span>Lendo a planilha…</strong></div></div>`;
+    return `<div class="drop-card"><h3>${r.titulo}</h3><div class="dropzone"><strong><span class="spinner"></span><span data-busy="${papel}">Lendo a planilha…</span></strong></div></div>`;
   }
   if (!s) {
     return `<div class="drop-card"><h3>${r.titulo}</h3>
@@ -611,14 +611,39 @@ function renderStepFile() {
   $("#to-next").onclick = goNext;
 }
 
-async function uploadFile(papel, file) {
-  imp.busy[papel] = true; imp.message = "";
-  renderImport();
+/* A planilha é lida no navegador (static/planilhas.js) e as linhas vão ao servidor em lotes:
+   o servidor não precisa abrir o Excel (limite de CPU do Cloudflare Workers).
+   Se o navegador não conseguir ler por um motivo técnico, usa o envio do arquivo inteiro, como antes. */
+async function sendFile(papel, file) {
+  if (window.Planilhas) {
+    let lido = null;
+    try {
+      lido = await window.Planilhas.ler(file);
+    } catch (err) {
+      if (err instanceof window.Planilhas.ErroPlanilha) throw err;   // problema na planilha: mostra a mensagem
+      console.warn("Leitura no navegador indisponível; enviando o arquivo ao servidor.", err);
+    }
+    if (lido) {
+      return window.Planilhas.enviar((url, json) => api(url, { method: "POST", json }), lido, { papel },
+        (feitos, total) => { if (total > 1) setBusyText(papel, `Enviando… ${Math.round((100 * feitos) / total)}%`); });
+    }
+  }
   const fd = new FormData();
   fd.append("arquivo", file);
   fd.append("papel", papel);
+  return api("/api/importacao/arquivo", { method: "POST", body: fd });
+}
+
+function setBusyText(papel, text) {
+  const box = $(`[data-busy="${papel}"]`);
+  if (box) box.textContent = text;
+}
+
+async function uploadFile(papel, file) {
+  imp.busy[papel] = true; imp.message = "";
+  renderImport();
   try {
-    const d = await api("/api/importacao/arquivo", { method: "POST", body: fd });
+    const d = await sendFile(papel, file);
     imp[papel] = sideFrom(papel, d);
     if (papel === "contratos") { imp.chave = d.chave || "cnpj"; imp.unica = false; }
     if (papel === "clientes" && imp.unica) await syncUnica();

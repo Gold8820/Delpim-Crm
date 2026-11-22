@@ -37,3 +37,6 @@ __pycache__/
 .venv/
 venv/
 build/
+
+# Configuração local do editor/assistente
+.claude/
