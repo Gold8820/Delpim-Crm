@@ -236,7 +236,7 @@ function wireMain() {
     const b = e.target.closest("[data-empty]");
     if (!b) return;
     if (b.dataset.empty === "new") openClientForm();
-    if (b.dataset.empty === "import") openImport();
+    if (b.dataset.empty === "import") (window.openAutoImport || openImport)();
     if (b.dataset.empty === "clear") {
       Object.assign(state, { q: "", cls: "", seg: "", page: 1 });
       $("#search").value = ""; $("#f-class").value = ""; $("#f-segment").value = "";
@@ -245,14 +245,14 @@ function wireMain() {
   });
 
   $("#btn-new").addEventListener("click", () => openClientForm());
-  $("#btn-import").addEventListener("click", openImport);
+  $("#btn-import").addEventListener("click", () => (window.openAutoImport || openImport)());
   $$("dialog [data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
 }
 
 /* ========================================================================
    Cadastro manual (novo / editar)
    ======================================================================== */
-const clientForm = { id: null, payments: [], contracts: [], editingNote: null };
+const clientForm = { id: null, payments: [], contracts: [], editingNote: null, extras: {} };
 
 function monthOptions(selected) {
   const set = new Set(state.meta.meses);
@@ -308,6 +308,22 @@ function renderHistory() {
     `<tr><td>${esc(monthLabel(p.mes_referencia))}</td><td class="num">${brl(p.valor_centavos)}</td><td>${badge(p.classificacao)}</td></tr>`).join("")}</tbody></table>`;
 }
 
+/* Dados adicionais vindos das planilhas (Pessoa, Inscrição estadual, Contato...): só consulta. */
+function extrasList(extras, labels) {
+  const items = Object.entries(extras || {}).filter(([, v]) => v != null && v !== "");
+  if (!items.length) return "";
+  return `<dl class="extras">${items.map(([k, v]) => `<dt>${esc(labels[k] || k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+}
+
+const fieldLabels = (key) => Object.fromEntries((state.meta[key] || []).map((c) => [c.chave, c.rotulo]));
+
+function renderExtras() {
+  const box = $("#extras-box");
+  const html = extrasList(clientForm.extras, fieldLabels("campos"));
+  box.hidden = !html;
+  box.innerHTML = html ? `<h3>Dados adicionais da planilha de clientes</h3>${html}` : "";
+}
+
 function renderContracts() {
   const box = $("#contracts-box");
   if (!clientForm.contracts.length) { box.hidden = true; return; }
@@ -324,7 +340,10 @@ function renderContracts() {
   box.innerHTML = `<h3>Contratos (${clientForm.contracts.length})</h3><table><thead><tr><th>Contrato</th><th>Produto</th><th>Situação</th><th class="num">Último valor mensal</th><th>Observações do contrato</th></tr></thead><tbody>${clientForm.contracts.map((c) =>
     `<tr><td><b>${esc(c.numero)}</b></td><td>${esc(c.produto || "—")}</td><td>${esc(c.situacao || "—")}</td>
      <td class="num">${c.ultimo_valor_centavos == null ? "—" : `${brl(c.ultimo_valor_centavos)} <span class="muted">(${esc(monthLabel(c.ultimo_mes))})</span>`}</td>
-     <td class="note-cell">${noteRow(c)}</td></tr>`).join("")}</tbody></table>`;
+     <td class="note-cell">${noteRow(c)}${(() => {
+       const extra = extrasList(c.dados_extras, fieldLabels("campos_contratos"));
+       return extra ? `<details class="contract-extras"><summary>Dados do contrato</summary>${extra}</details>` : "";
+     })()}</td></tr>`).join("")}</tbody></table>`;
 }
 
 async function onContractsClick(e) {
@@ -357,6 +376,7 @@ async function openClientForm(id = null) {
   clientForm.id = id;
   clientForm.payments = [];
   clientForm.contracts = [];
+  clientForm.extras = {};
   clientForm.editingNote = null;
   $("#client-title").textContent = id ? "Editar cliente" : "Novo cliente";
   let defaultMonth = state.mes || state.meta.mes_atual;
@@ -369,6 +389,7 @@ async function openClientForm(id = null) {
       }
       clientForm.payments = c.pagamentos;
       clientForm.contracts = c.contratos || [];
+      clientForm.extras = c.dados_extras || {};
     } catch (err) { toast(err.message, "error"); return; }
   } else {
     defaultMonth = state.meta.mes_atual;
@@ -378,6 +399,7 @@ async function openClientForm(id = null) {
   if (id) syncValueForMonth(); else updateClassPreview();
   renderHistory();
   renderContracts();
+  renderExtras();
   $("#dlg-client").showModal();
   $("#c-codigo").focus();
 }
@@ -469,7 +491,7 @@ function showView(name) {
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   document.title = settings ? "Configurações de importação" : "Clientes";
-  if (settings) { loadConfigs(); loadCurva(); }
+  if (settings) { loadConfigs(); loadCurva(); if (window.loadFonteValor) window.loadFonteValor(); }
 }
 const routeFromHash = () => showView(location.hash === "#configuracoes" ? "configuracoes" : "clientes");
 

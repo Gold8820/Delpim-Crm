@@ -22,7 +22,7 @@ FIELD_LABELS = {
     "codigo": "Código do cliente",
     "razao_social": "Razão social",
     "nome_fantasia": "Nome fantasia",
-    "cnpj": "CNPJ",
+    "cnpj": "CNPJ / CPF (documento)",
     "telefone": "Telefone",
     "email": "E-mail",
     "cep": "CEP",
@@ -38,6 +38,28 @@ FIELD_LABELS = {
     "valor": "Valor total pago no mês",
     "mes": "Mês de referência",
 }
+
+# Demais colunas reconhecidas nas planilhas reais. Ficam em "dados adicionais" (coluna dados_extras), sem
+# regra de negócio própria: são guardadas, aparecem na ficha e nunca são apagadas por célula vazia.
+CLIENT_EXTRA_LABELS = {
+    "pessoa": "Pessoa (física / jurídica)",
+    "endereco_padrao": "Endereço padrão",
+    "referencia": "Referência (endereço)",
+    "codigo_ibge": "Código IBGE da cidade",
+    "contato_padrao": "Contato padrão",
+    "contato_cobranca": "Contato de cobrança",
+    "contato": "Contato",
+    "inscricao_estadual": "Inscrição estadual",
+    "estado_inscricao_estadual": "Estado da inscrição estadual",
+    "data_nascimento": "Data de nascimento",
+    "optante_simples": "Optante pelo Simples Nacional",
+    "dias_antecedencia_faturamento": "Dias de antecedência do faturamento",
+    "dia_faturamento": "Dia do faturamento",
+    "configuracao_faturamento": "Configuração do faturamento",
+    "inscricao_municipal": "Inscrição municipal",
+}
+FIELD_LABELS.update(CLIENT_EXTRA_LABELS)
+EXTRA_MAX_LEN = 500
 
 MAX_LEN = {"codigo": 40, "numero": 20, "complemento": 100, "segmento": 100, "vendedor": 100,
            "cidade": 100, "bairro": 100, "telefone": 40}
@@ -163,21 +185,52 @@ def valid_cnpj(value: str) -> bool:
     return value[12:] == f"{d1}{d2}"
 
 
+def valid_cpf(value: str) -> bool:
+    if len(value) != 11 or not value.isdigit() or value == value[0] * 11:
+        return False
+    for size in (9, 10):
+        total = sum(int(d) * w for d, w in zip(value[:size], range(size + 1, 1, -1)))
+        digit = (total * 10) % 11 % 10
+        if digit != int(value[size]):
+            return False
+    return True
+
+
+def _documento(raw: str) -> tuple[str, str | None]:
+    """Forma canônica do documento: CPF com 11 dígitos ou CNPJ com 14 caracteres.
+
+    O Excel remove zeros à esquerda de números: com até 11 dígitos, vale o CPF se ele for válido (e o
+    mesmo número não for um CNPJ válido); senão, completa-se até 14 (CNPJ). Retorna (documento, tipo).
+    """
+    s = re.sub(r"[^0-9A-Za-z]", "", raw).upper()
+    if s.isdigit() and len(s) <= 11:
+        cpf, cnpj = s.zfill(11), s.zfill(14)
+        if valid_cpf(cpf) and (len(s) == 11 or not valid_cnpj(cnpj)):
+            return cpf, "cpf"
+        return cnpj, "cnpj"
+    if s.isdigit() and len(s) < 14:
+        return s.zfill(14), "cnpj"
+    return s, "cnpj"
+
+
 def parse_cnpj(value) -> tuple[str | None, str | None]:
+    """Documento do cliente: CNPJ (14, inclusive o alfanumérico) ou CPF (11), sem pontuação."""
     raw = to_text(value)
     if raw is None:
         return None, None
-    s = re.sub(r"[^0-9A-Za-z]", "", raw).upper()
-    if s.isdigit() and len(s) < 14:
-        s = s.zfill(14)  # o Excel remove zeros à esquerda de números
+    s, tipo = _documento(raw)
+    if tipo == "cpf":
+        return s, None
     if len(s) != 14:
-        return None, "CNPJ deve ter 14 caracteres."
+        return None, "CNPJ deve ter 14 caracteres (ou CPF com 11 dígitos)."
     if not valid_cnpj(s):
         return None, "CNPJ inválido."
     return s, None
 
 
 def format_cnpj(value: str | None) -> str | None:
+    if value and len(value) == 11 and value.isdigit():
+        return f"{value[:3]}.{value[3:6]}.{value[6:9]}-{value[9:]}"   # CPF
     if not value or len(value) != 14:
         return value
     return f"{value[:2]}.{value[2:5]}.{value[5:8]}/{value[8:12]}-{value[12:]}"
@@ -399,6 +452,48 @@ CONTRACT_LABELS = {
     "vendedor": "Vendedor responsável",
     "observacoes": "Observações do contrato",
 }
+CONTRACT_EXTRA_LABELS = {
+    "cliente_nome": "Cliente (nome na planilha)",
+    "empresa": "Empresa (contratada)",
+    "documento_empresa": "Documento da empresa",
+    "classificacao_cliente": "Classificação do cliente",
+    "valor_original": "Valor original (contratual)",
+    "vigencia": "Vigência",
+    "encerrado": "Encerrado",
+    "data_encerramento": "Data de encerramento",
+    "vencimento": "Dia de vencimento",
+    "quantidade_parcelas": "Quantidade de parcelas",
+    "proximo_reajuste": "Próximo reajuste",
+    "pagamento": "Forma de pagamento",
+    "parcelas_quitadas": "Parcelas quitadas",
+    "parcelas_atrasadas": "Parcelas em atraso",
+    "valor_parcela_atrasado": "Valor das parcelas em atraso",
+    "parcelas_futuras": "Quantidade de parcelas futuras",
+    "periodo_reajuste": "Período de reajuste",
+}
+CONTRACT_LABELS.update(CONTRACT_EXTRA_LABELS)
+
+
+def extras_from(raw: dict, keys) -> dict:
+    """Dados adicionais preenchidos na linha (texto limpo, até 500 caracteres). Células vazias ficam de fora."""
+    out = {}
+    for key in keys:
+        text = to_text(raw.get(key))
+        if text:
+            out[key] = text[:EXTRA_MAX_LEN]
+    return out
+
+
+def merge_extras(current: dict | None, incoming: dict) -> dict:
+    """Valores novos substituem os antigos; célula vazia nunca apaga o que já estava guardado."""
+    return {**(current or {}), **incoming}
+
+
+def flag_sim(value) -> bool:
+    """'Sim', 'S', 'Yes', 'True', '1' (com ou sem espaços/acentos) -> True."""
+    text = strip_accents(to_text(value) or "").strip().lower()
+    return text in ("sim", "s", "yes", "y", "true", "verdadeiro", "1", "x")
+
 # Campos do contrato que são do cliente: só preenchem o cadastro se a planilha de clientes não os trouxe.
 CONTRACT_CLIENT_FIELDS = ("segmento", "vendedor")
 CONTRACT_TEXT_LIMITS = {"numero_contrato": 60, "produto": 200, "situacao": 100, "segmento": 100, "vendedor": 100}
@@ -413,10 +508,9 @@ def key_cnpj(value) -> str | None:
     text = to_text(value)
     if not text:
         return None
-    s = re.sub(r"[^0-9A-Za-z]", "", text).upper()
-    if not s:
+    if not re.sub(r"[^0-9A-Za-z]", "", text):
         return None
-    return s.zfill(14) if s.isdigit() and len(s) < 14 else s
+    return _documento(text)[0]   # mesma forma canônica do cadastro (CPF 11 / CNPJ 14)
 
 
 def key_codigo(value) -> str | None:

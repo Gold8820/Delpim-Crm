@@ -7,13 +7,18 @@ Regras principais
   * O valor mensal pago do contrato é gravado por mês (substitui, nunca soma). O total do cliente no mês
     é a soma dos valores dos seus contratos naquele mês, e é ele que define a classificação.
   * O campo "valor parcela futuro" é guardado só como informação; não entra no cálculo.
+  * Fonte do valor pago (configuração "fonte_valor_pago"): com a opção ligada, contrato encerrado (e, se
+    escolhido, contrato com parcelas em atraso) conta R$ 0,00 no mês; desligada, os valores do mês não mudam.
+  * Demais colunas reconhecidas (Empresa, Vigência, Quantidade Parcelas...) ficam em dados_extras.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from .classification import classify
-from .validation import (CONTRACT_CLIENT_FIELDS, CONTRACT_LABELS, display_name, format_cnpj,
+from .repository import _json_obj
+from .validation import (CONTRACT_CLIENT_FIELDS, CONTRACT_EXTRA_LABELS, CONTRACT_LABELS, display_name, extras_from,
+                         flag_sim, merge_extras, format_cnpj,
                          format_money, is_blank, key_cnpj, key_codigo, merge_note, month_label,
                          normalize_contract, to_text)
 
@@ -23,6 +28,7 @@ TIPOS = {
     "conflito": "Conflito de identificação",
     "sem_cliente": "Contrato sem cliente correspondente",
     "cliente_sem_contrato": "Cliente sem contrato",
+    "campo_ignorado": "Campo inválido ignorado (registro importado)",
 }
 
 # campo da planilha -> chave do valor normalizado
@@ -46,10 +52,19 @@ class ContractRec:
     month_lines: dict = field(default_factory=dict)     # mês -> linha
     changed_months: dict = field(default_factory=dict)  # mês -> centavos que serão gravados
     fields_changed: bool = False
+    extras: dict = field(default_factory=dict)          # dados adicionais (dados_extras)
 
     @property
     def dirty(self) -> bool:
         return self.is_new or self.fields_changed or bool(self.changed_months)
+
+
+def _inteiro(value) -> int:
+    text = to_text(value)
+    try:
+        return int(float(text.replace(",", "."))) if text else 0
+    except ValueError:
+        return 0
 
 
 def _show(key: str, value) -> str:
@@ -80,6 +95,8 @@ def process(ctx) -> dict:
     header = table["header"]
     mapped = {k: v for k, v in ctx.mapping.items() if v is not None}
     by_cnpj = ctx.chave == "cnpj"
+    extra_keys = [k for k in CONTRACT_EXTRA_LABELS if k in mapped]
+    fonte = getattr(ctx, "fonte", None) or {"ativo": True, "excluir_encerrados": True, "excluir_atrasados": False}
 
     db_contracts = {r["numero"].lower(): dict(r) for r in db.execute(
         "SELECT ct.*, c.codigo AS cliente_codigo FROM contratos ct JOIN clientes c ON c.id = ct.cliente_id")}
@@ -110,7 +127,7 @@ def process(ctx) -> dict:
                "cnpj": None, "produto": clean.get("produto"), "situacao": clean.get("situacao"),
                "mes": month if clean["valor_centavos"] is not None else None,
                "valor_centavos": clean["valor_centavos"], "parcela_centavos": clean["parcela_centavos"],
-               "mudancas": [], "erros": []}
+               "mudancas": [], "erros": [], "avisos": []}
         row_notes: list[str] = []
 
         def reject(kind: str, *messages: str) -> None:
@@ -182,7 +199,8 @@ def process(ctx) -> dict:
                 is_new, use_empty = True, False
             rec = ContractRec(numero=db_row["numero"] if db_row else numero, entity=entity,
                               db_id=db_row["id"] if db_row else None, is_new=is_new,
-                              values=dict(base), first_line=line)
+                              values=dict(base), first_line=line,
+                              extras=_json_obj(db_row.get("dados_extras")) if db_row else {})
             recs[numero_l] = rec
             entity.contract_recs.append(rec)
         else:
@@ -203,6 +221,30 @@ def process(ctx) -> dict:
         if merged != rec.values:
             rec.fields_changed = rec.fields_changed or not rec.is_new
             rec.values = merged
+
+        # --- dados adicionais do contrato (nunca apagados por célula vazia)
+        incoming_extras = extras_from(raw, extra_keys)
+        merged_extras = merge_extras(rec.extras, incoming_extras)
+        if merged_extras != rec.extras:
+            if not rec.is_new:
+                changes += [{"campo": CONTRACT_EXTRA_LABELS[k], "de": rec.extras.get(k) or "(vazio)",
+                             "para": merged_extras[k]} for k in incoming_extras if rec.extras.get(k) != merged_extras[k]]
+                rec.fields_changed = True
+            rec.extras = merged_extras
+
+        # --- valor pago no mês, conforme a fonte configurada
+        if not fonte.get("ativo", True):
+            clean["valor_centavos"] = None
+        elif clean["valor_centavos"] is not None:
+            motivo = None
+            if fonte.get("excluir_encerrados") and flag_sim(raw.get("encerrado")):
+                motivo = "contrato encerrado"
+            elif fonte.get("excluir_atrasados") and _inteiro(raw.get("parcelas_atrasadas")) > 0:
+                motivo = "parcelas em atraso"
+            if motivo and clean["valor_centavos"]:
+                valor_planilha = format_money(clean["valor_centavos"])
+                row["avisos"].append(f"Valor do mês considerado R$ 0,00 ({motivo}); valor da planilha: {valor_planilha}.")
+                clean["valor_centavos"] = 0
 
         # --- valor mensal do contrato
         if clean["valor_centavos"] is not None:

@@ -252,6 +252,43 @@ Menu **Configurações de importação** → seção **Configuração da Curva A
 - **Importação:** a coluna **Observações** (ou *Observações do cliente*, *Obs*, etc.) é sugerida para clientes; **Observacao** (singular) e *Observações do contrato* são sugeridas para contratos. A coluna pode ser salva no mapeamento padrão, como as demais.
 - **Preservação nas reimportações:** célula vazia nunca apaga a observação cadastrada, mesmo com a opção "substituir por vazios". Se não houver observação cadastrada, o texto da planilha é usado. Se a planilha trouxer um texto diferente do cadastrado, o cadastrado é mantido e a prévia mostra um aviso. Para trocar o texto, edite manualmente na ficha.
 
+## Importação automática (clientes e depois contratos)
+
+Botão **Importar planilha**: selecione a planilha de **clientes** e a de **contratos** (`.xlsx`, `.xls` XML do
+Excel 2003 ou `.csv`; também funciona com uma só) e clique em **Importar**. Não há associação manual de colunas.
+
+1. **Clientes:** o navegador lê o arquivo (`static/planilhas.js`), envia as linhas em lotes, as colunas são
+   reconhecidas automaticamente (inclusive com linhas vazias antes do cabeçalho, acentos, maiúsculas e espaços),
+   e o servidor cadastra novos, atualiza existentes e separa os sem alteração, numa transação própria.
+2. **Contratos:** em seguida, o mesmo para os contratos, relacionados aos clientes pelo **documento**
+   (Documento × Documento Cliente; CPF ou CNPJ, sem pontuação). Nunca por nome: sem documento correspondente,
+   o contrato fica como "não relacionado" no relatório. O **Nº** é o identificador único (sem duplicar em
+   importações semanais).
+3. **Resultado:** cartões de cada etapa (total, novos, atualizados, sem alteração, erros; para contratos também
+   relacionados, não relacionados e duplicidades), resumo geral e **CSV de inconsistências** (arquivo, linha, motivo).
+
+As etapas são independentes: se uma planilha falhar, nada dela é gravado e a outra é processada normalmente.
+
+- **Colunas reconhecidas (arquivos reais):** clientes — Pessoa, Documento, Razão Social, Nome Fantasia, Endereço
+  Padrão, Logradouro, Numero, Bairro, Complemento, CEP, Cidade, Referência (do endereço; não é o mês), Codigo
+  IBGE/Cidade, UF, Contato Padrão, Contato Cobrança, Contato, Telefone, E-mail, Inscrição Estadual e o seu Estado,
+  Data de Nascimento, Optante Simples Nacional, Ramo Atividade (segmento), Dias Antecedência/Dia/Configuração de
+  Faturamento, Inscrição Municipal, Observações. Contratos — Nº, Documento Cliente, Cliente, Valor Atual, Valor
+  Original, Quantidade Parcelas, Valor Parcela Futuro, Observacao, status, Início/Término, Encerrado, Atrasado,
+  Quitado, Vigência, Empresa e as demais colunas do arquivo. Campos sem regra própria ficam em **dados adicionais**
+  (`dados_extras`), aparecem na ficha e nunca são apagados por célula vazia.
+- **Mapeamento padrão:** na primeira importação o reconhecimento automático é salvo como padrão de cada planilha
+  (editável em Configurações de importação). Coluna nova desconhecida ou coluna do padrão que sumiu: só ela vai para
+  o relatório de inconsistências; a importação continua.
+- **CPF:** o documento aceita CPF (11 dígitos) além de CNPJ; os zeros que o Excel remove são recuperados.
+- **Contato inválido** (e-mail ou telefone mal formatado) não impede o cadastro: o campo é ignorado e relatado.
+- **Fonte do valor pago (Curva ABC):** a planilha de contratos não traz valores recebidos. O valor do mês do contrato
+  vem do campo "Valor mensal pago" do mapeamento (padrão "Valor Atual", a mensalidade recorrente); "Valor Original",
+  "Valor Parcela Futuro" e quantidades de parcelas nunca são usados. Em Configurações > **Fonte do valor pago**:
+  contrato encerrado conta R$ 0,00 (ligado por padrão), contrato com parcelas em atraso conta R$ 0,00 (opcional) e a
+  opção de não alterar os valores do mês. O valor do cliente no mês é a soma dos contratos; classificação recalculada.
+- A importação detalhada (com revisão de colunas) continua disponível em "Importação avançada".
+
 ## Importação com duas planilhas (clientes + contratos)
 
 Não é preciso juntar as planilhas: selecione o arquivo de **clientes** e o de **contratos** (cada um `.xlsx`, `.csv` ou `.xls` no formato XML do Excel 2003; também funciona só com um deles).

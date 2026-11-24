@@ -179,6 +179,14 @@ SCHEMA = [
         criado_em TEXT NOT NULL
     )
     """,
+    # Configurações gerais do sistema (chave -> valor JSON). Ex.: fonte_valor_pago (Curva ABC).
+    """
+    CREATE TABLE IF NOT EXISTS configuracoes_sistema (
+        chave TEXT PRIMARY KEY,
+        valor JSONB NOT NULL,
+        atualizado_em TEXT NOT NULL
+    )
+    """,
     # Usuários autorizados pela empresa (login com Supabase Auth). Só quem está aqui, ativo, entra no sistema.
     # A aplicação apenas LÊ esta tabela; o cadastro é feito pelo administrador (SQL Editor do Supabase).
     """
@@ -208,8 +216,8 @@ _ADDITIONS = {
         "contratos_gravados": "INTEGER NOT NULL DEFAULT 0",
         "contratos_rejeitados": "INTEGER NOT NULL DEFAULT 0",
     },
-    "clientes": {"observacoes": "TEXT"},
-    "contratos": {"observacoes": "TEXT"},
+    "clientes": {"observacoes": "TEXT", "dados_extras": "JSONB NOT NULL DEFAULT '{}'::jsonb"},
+    "contratos": {"observacoes": "TEXT", "dados_extras": "JSONB NOT NULL DEFAULT '{}'::jsonb"},
 }
 
 

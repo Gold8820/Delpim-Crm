@@ -22,6 +22,16 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 9 — importação automática em duas etapas (clientes e contratos) — 296 testes
+- **Tela:** `static/importacao.js` (diálogo `#dlg-auto`): dois arquivos + Importar; etapa 1 clientes, etapa 2 contratos (lotes → prévia → confirmação, cada uma com transação própria); cartões por etapa, resumo geral e CSV de inconsistências gerado no navegador. A importação detalhada antiga continua ("Importação avançada").
+- **Reconhecimento:** aliases para todos os cabeçalhos reais (28/28 clientes, 25/25 contratos). "Referência" deixou de ser mês. Campos sem regra própria em `CLIENT_EXTRA_LABELS`/`CONTRACT_EXTRA_LABELS` → coluna `dados_extras` (JSONB) em clientes e contratos; mesclagem sem apagar por célula vazia; exibidos na ficha.
+- **Documento:** `parse_cnpj`/`key_cnpj` aceitam CPF válido (forma canônica 11 dígitos; CNPJ 14). Na importação, e-mail/telefone inválidos viram `campo_ignorado` (cliente importado).
+- **Mapeamento padrão:** salvo automaticamente na 1ª importação; `/api/importacao/lote` final devolve `colunas_desconhecidas`; campos novos (observacoes + dados adicionais) ausentes de mapeamentos antigos são preenchidos pelo reconhecimento (o da produção, de 17/11, não tinha Observações).
+- **Fonte do valor pago:** tabela `configuracoes_sistema` (chave `fonte_valor_pago`: ativo, excluir_encerrados=true, excluir_atrasados=false); `GET/PUT /api/configuracoes/fonte-valor`; contrato excluído grava R$ 0,00 no mês.
+- **Banco (produção, 23/11/2026, só adição):** `clientes.dados_extras`, `contratos.dados_extras`, `configuracoes_sistema` com RLS e grants do `app_clientes`.
+- **Arquivos reais (banco de teste):** clientes 1.377 linhas → 1.274 cadastrados (119 PF por CPF), 103 erros (99 sem documento, 3 documento inválido, 1 duplicado), 16 contatos ignorados; contratos 514 → 514 relacionados. Reimportação: nada novo/atualizado. `tests/test_planilhas_reais.py` (pulado sem os arquivos).
+- **Publicado:** só no Worker de validação. Produção intocada.
+
 ### Rodada 8 — login com Supabase Auth (sem Cloudflare Access) — 277 testes passando
 - **Motivo:** o usuário não quer Cloudflare Zero Trust/Access (exige cartão). Removidos `clientes/acesso.py`, `tests/acesso_helper.py`, `CF_ACCESS_*` e o bloqueio 503.
 - **Login:** `clientes/autenticacao.py` + `templates/login.html`. Backend chama o Supabase Auth (`/auth/v1/token?grant_type=password|refresh_token`, `/auth/v1/logout`) com a chave publicável; cookies `sc_sessao`/`sc_renovacao` (HttpOnly, Secure, SameSite=Lax). JWT ES256 validado em Python puro (P-256; conferido contra a biblioteca cryptography nos testes), JWKS do projeto com cache de 1 h, tokens validados em cache por instância. Autorização: e-mail ativo em `usuarios_autorizados` (cache 60 s). Verificação de `Origin` em POST/PUT/DELETE. Limite simples de 8 senhas erradas/10 min por e-mail (por instância).

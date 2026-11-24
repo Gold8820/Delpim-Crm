@@ -89,7 +89,27 @@ BEGIN
     END IF;
 END $$;
 
--- 6) Conferência: RLS ligado, política presente, nenhum privilégio para anon/authenticated.
+-- 6) Importação automática: dados adicionais das planilhas e configurações gerais (fonte do valor pago).
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS dados_extras JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.contratos ADD COLUMN IF NOT EXISTS dados_extras JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE TABLE IF NOT EXISTS public.configuracoes_sistema (
+    chave TEXT PRIMARY KEY,
+    valor JSONB NOT NULL,
+    atualizado_em TEXT NOT NULL
+);
+ALTER TABLE public.configuracoes_sistema ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.configuracoes_sistema FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.configuracoes_sistema TO app_clientes;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'configuracoes_sistema'
+                   AND policyname = 'app_clientes_acesso') THEN
+        CREATE POLICY app_clientes_acesso ON public.configuracoes_sistema FOR ALL TO app_clientes
+            USING (true) WITH CHECK (true);
+    END IF;
+END $$;
+
+-- 7) Conferência: RLS ligado, política presente, nenhum privilégio para anon/authenticated.
 SELECT c.relname AS tabela,
        c.relrowsecurity AS rls_ativo,
        EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname

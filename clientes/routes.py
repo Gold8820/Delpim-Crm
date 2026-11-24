@@ -13,7 +13,7 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from . import configs as cfg, db as dbmod, importer, repository as repo
 from .classification import LABELS, describe_faixas, validate_faixas
 from .db import get_db
-from .validation import (CONTRACT_LABELS, FIELD_LABELS, UFS, normalize, parse_money, to_note_checked)
+from .validation import (CLIENT_EXTRA_LABELS, CONTRACT_EXTRA_LABELS, CONTRACT_LABELS, FIELD_LABELS, UFS, normalize, parse_money, to_note_checked)
 
 bp = Blueprint("clientes", __name__)
 
@@ -67,6 +67,23 @@ def _curva_payload(faixas: list[dict]) -> dict:
                         "maximo": _money_input(f["maximo_centavos"]),
                         "minimo_centavos": f["minimo_centavos"],
                         "maximo_centavos": f["maximo_centavos"]} for f in faixas]}
+
+
+@bp.get("/api/configuracoes/fonte-valor")
+def fonte_valor_get():
+    """Fonte do valor pago no mês (Curva ABC)."""
+    return jsonify(repo.load_fonte_valor(get_db()))
+
+
+@bp.put("/api/configuracoes/fonte-valor")
+def fonte_valor_put():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not all(isinstance(body.get(k, False), bool) for k in repo.FONTE_VALOR_PADRAO):
+        return error("Dados inválidos.")
+    db = get_db()
+    fonte = repo.save_fonte_valor(db, body)
+    db.commit()
+    return jsonify({**fonte, "mensagem": "Configuração salva. Vale a partir da próxima importação de contratos."})
 
 
 @bp.get("/api/configuracoes/curva-abc")
@@ -297,8 +314,20 @@ def _file_payload(db, papel: str, table: dict, *, config_id=None, manual: bool =
         mapping, pendencias = applied["mapeamento"], applied["pendencias"]
         if papel == "contratos":
             chave = config["chave"] or "cnpj"
+        # Campo que não existia quando o mapeamento foi salvo (campo novo do sistema): usa o reconhecimento
+        # automático. Campo que o usuário deixou de fora de propósito (salvo sem coluna) continua de fora.
+        salvo = config.get("mapeamento") or {}
+        # campos criados depois dos primeiros mapeamentos salvos: observações e dados adicionais
+        novos = {"observacoes", *(CLIENT_EXTRA_LABELS if papel == "clientes" else CONTRACT_EXTRA_LABELS)}
+        used = {v for v in mapping.values() if v is not None}
+        for key, idx in info["mapeamento_sugerido"].items():
+            if key in novos and key not in salvo and mapping.get(key) is None and idx is not None and idx not in used:
+                mapping[key] = idx
+                used.add(idx)
+    used = {v for v in mapping.values() if v is not None}
+    desconhecidas = [{"indice": i, "nome": h} for i, h in enumerate(table["header"]) if i not in used]
     return {**info, "papel": papel, "mapeamento": mapping, "pendencias": pendencias, "chave": chave,
-            "linha_cabecalho": header_row,
+            "colunas_desconhecidas": desconhecidas, "linha_cabecalho": header_row,
             "configuracao": {"id": config["id"], "nome": config["nome"], "padrao": config["padrao"]} if config else None,
             "configuracoes": [{"id": c["id"], "nome": c["nome"], "padrao": c["padrao"]} for c in available]}
 

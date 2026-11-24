@@ -18,13 +18,14 @@ from types import SimpleNamespace
 
 from .classification import classify
 from .contracts import TIPOS, process as process_contracts
-from .repository import (find_by_cnpj, find_by_codigo, find_contract, insert_client, insert_contract,
+from .repository import (_json_obj, load_fonte_valor, find_by_cnpj, find_by_codigo, find_contract, insert_client, insert_contract,
                          load_faixas, now, update_client, update_contract, upsert_contract_value, upsert_payment)
-from .validation import (search_blob, CLIENT_FIELDS, CONTRACT_LABELS, FIELD_LABELS, display_name, format_cnpj,
+from .validation import (CLIENT_EXTRA_LABELS, CONTRACT_EXTRA_LABELS, extras_from, merge_extras, search_blob, CLIENT_FIELDS, CONTRACT_LABELS, FIELD_LABELS, display_name, format_cnpj,
                          format_money, is_blank, key_cnpj, key_codigo, merge_note, month_label, normalize,
                          parse_month, strip_accents, to_text)
 
 MAX_ROWS = 50_000
+IGNORAVEIS_NA_IMPORTACAO = ("email", "telefone")   # inválidos: campo ignorado, cliente importado
 MAX_PREVIEW_ROWS = 1_000
 
 
@@ -272,14 +273,31 @@ _ALIASES = {
     "bairro": ["bairro", "distrito"],
     "cidade": ["cidade", "municipio", "localidade"],
     "estado": ["estado", "uf"],
-    "segmento": ["segmento", "ramo", "ramodeatividade", "atividade", "categoria"],
+    "segmento": ["segmento", "ramo", "ramodeatividade", "ramoatividade", "ramodeatuacao", "atividade", "categoria"],
     "vendedor": ["vendedor", "vendedorresponsavel", "responsavel", "representante", "consultor"],
     "valor": ["valor", "valorpago", "valortotalpagonomes", "valortotalpago", "totalpago",
               "valortotal", "valordomes", "valorpagonomes", "faturamento", "totalnomes",
               "valoratual"],
-    "mes": ["mes", "mesreferencia", "mesdereferencia", "referencia", "competencia", "periodo", "mesref"],
+    # "Referência" sozinha NÃO é mês: na planilha real de clientes é a referência do endereço.
+    "mes": ["mes", "mesreferencia", "mesdereferencia", "competencia", "periodo", "mesref", "mesano"],
     # Singular "Observacao" fica com os contratos (é onde as planilhas reais a trazem).
     "observacoes": ["observacoes", "observacoesdocliente", "observacaogeral", "observacoesgerais", "obs"],
+    # dados adicionais (planilha real de clientes)
+    "pessoa": ["pessoa", "tipopessoa", "tipodepessoa", "pessoafisicajuridica"],
+    "endereco_padrao": ["enderecopadrao"],
+    "referencia": ["referencia", "pontodereferencia", "referenciaendereco"],
+    "codigo_ibge": ["codigoibgecidade", "codigoibge", "codibge", "ibge", "codigomunicipio"],
+    "contato_padrao": ["contatopadrao"],
+    "contato_cobranca": ["contatocobranca", "contatodecobranca"],
+    "contato": ["contato", "nomecontato", "nomedocontato", "responsavelcontato"],
+    "inscricao_estadual": ["inscricaoestadual", "ie", "inscrestadual"],
+    "estado_inscricao_estadual": ["estadoinscricaoestadual", "ufinscricaoestadual", "ufie"],
+    "data_nascimento": ["datadenascimento", "datanascimento", "nascimento"],
+    "optante_simples": ["optantesimplesnacional", "optantesimples", "simplesnacional"],
+    "dias_antecedencia_faturamento": ["diasantecedenciafaturamento", "diasdeantecedenciafaturamento"],
+    "dia_faturamento": ["diafaturamento", "diadefaturamento"],
+    "configuracao_faturamento": ["configuracaofaturamento", "configuracaodefaturamento"],
+    "inscricao_municipal": ["inscricaomunicipal", "im", "inscrmunicipal"],
 }
 _FALLBACK_ALIASES = {"razao_social": ["cliente", "nome", "nomecliente", "empresa"]}
 
@@ -293,9 +311,10 @@ _CONTRACT_ALIASES = {
                         "contrato", "codigocontrato", "codcontrato", "idcontrato", "n"],  # "Numero" (endereço) NÃO é contrato
     "produto": ["produto", "plano", "servico", "nomedoproduto", "produtoplano", "descricao"],
     "situacao": ["situacao", "situacaocontrato", "statuscontrato", "status"],
-    "data_inicio": ["datainicio", "datadeinicio", "inicio", "datadeadesao", "dataadesao", "adesao",
-                    "datacontrato", "iniciovigencia"],
-    "data_fim": ["datafim", "datadefim", "datatermino", "datadetermino", "termino", "fimvigencia"],
+    "data_inicio": ["datainicio", "datadeinicio", "inicio", "iniciocontrato", "iniciodocontrato", "datadeadesao",
+                    "dataadesao", "adesao", "datacontrato", "iniciovigencia"],
+    "data_fim": ["datafim", "datadefim", "datatermino", "datadetermino", "termino", "terminocontrato",
+                 "terminodocontrato", "fimvigencia"],
     # Atenção: "valor parcela futuro" NUNCA é sugerido como valor mensal pago.
     # "Valor Atual" é a sugestão inicial (relação com "Quantidade Parcelas" e "Valor Parcela Futuro"
     # confirmada nos arquivos reais). O usuário pode trocar a coluna na associação.
@@ -308,6 +327,24 @@ _CONTRACT_ALIASES = {
     "segmento": _ALIASES["segmento"],
     "vendedor": _ALIASES["vendedor"],
     "observacoes": ["observacao", "observacoes", "observacaodocontrato", "obs"],
+    # dados adicionais (planilha real de contratos)
+    "cliente_nome": ["cliente", "nomecliente", "nomedocliente", "razaosocialcliente"],
+    "empresa": ["empresa", "empresacontratada", "contratada"],
+    "documento_empresa": ["documentoempresa", "cnpjempresa", "documentodaempresa"],
+    "classificacao_cliente": ["classificacaocliente", "classificacaodocliente"],
+    "valor_original": ["valororiginal", "valorinicial", "valordocontrato", "valorcontrato"],
+    "vigencia": ["vigencia"],
+    "encerrado": ["encerrado", "contratoencerrado", "cancelado"],
+    "data_encerramento": ["dataencerramento", "datadeencerramento", "datacancelamento"],
+    "vencimento": ["vencimento", "diavencimento", "diadevencimento"],
+    "quantidade_parcelas": ["quantidadeparcelas", "qtdparcelas", "quantidadedeparcelas", "parcelas"],
+    "proximo_reajuste": ["proxreajuste", "proximoreajuste"],
+    "pagamento": ["pagamento", "formapagamento", "formadepagamento", "tipopagamento"],
+    "parcelas_quitadas": ["quitado", "quitadas", "parcelasquitadas", "parcelaspagas"],
+    "parcelas_atrasadas": ["atrasado", "atrasadas", "parcelasatrasadas", "parcelasematraso"],
+    "valor_parcela_atrasado": ["valorparcelaatrasado", "valorparcelasatrasadas", "valoratrasado"],
+    "parcelas_futuras": ["quantidadeparcelafuturo", "quantidadeparcelasfuturas", "qtdparcelasfuturas"],
+    "periodo_reajuste": ["periodoreajuste", "periododereajuste"],
 }
 
 
@@ -438,6 +475,7 @@ class _Entity:
     pending: dict = field(default_factory=dict)       # mês -> centavos a gravar
     sheet_fields: set = field(default_factory=set)    # campos preenchidos pela planilha de clientes
     contract_recs: list = field(default_factory=list)
+    extras: dict = field(default_factory=dict)                # dados adicionais (dados_extras)
     contract_client: dict = field(default_factory=dict)       # segmento/vendedor vindos dos contratos
     import_month_values: dict = field(default_factory=dict)   # mês -> {contrato: centavos}
     _db_payments: dict | None = None
@@ -505,9 +543,10 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
 
     mapped = {k: v for k, v in mapping.items() if v is not None}
     merge_fields = [f for f in CLIENT_FIELDS if f in mapped and f != "codigo"]
+    extra_fields = [f for f in CLIENT_EXTRA_LABELS if f in mapped]
 
     db_by_code = {r["codigo"].lower(): dict(r) for r in db.execute(
-        f"SELECT id, {', '.join(CLIENT_FIELDS)} FROM clientes")}
+        f"SELECT id, dados_extras, {', '.join(CLIENT_FIELDS)} FROM clientes")}
     db_by_cnpj = {r["cnpj"]: r for r in db_by_code.values() if r["cnpj"]}
     all_payments: dict[int, dict] | None = None   # carregados de uma vez, na primeira consulta (sem 1 SELECT por cliente)
     ent_by_code: dict[str, _Entity] = {}
@@ -524,7 +563,8 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
 
     def from_db(row: dict) -> _Entity:
         values = {k: row[k] for k in CLIENT_FIELDS}
-        entity = _Entity(db_id=row["id"], values=dict(values), original=dict(values))
+        entity = _Entity(db_id=row["id"], values=dict(values), original=dict(values),
+                         extras=_json_obj(row.get("dados_extras")))
         register(entity)
         return entity
 
@@ -578,6 +618,16 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
                            "identificacao": clean["codigo"] or row["cnpj"] or "", "nome": row["nome"],
                            "motivo": " | ".join(messages), "conteudo": _content(table["header"], cells)})
 
+        # Contato inválido (e-mail, telefone) não impede o cadastro: o campo é ignorado nesta linha
+        # (o valor já cadastrado, se houver, é mantido) e o problema vai para o relatório.
+        for campo in IGNORAVEIS_NA_IMPORTACAO:
+            if campo in errors:
+                motivo = _field_error(campo, errors.pop(campo))
+                clean[campo] = None
+                row["avisos"].append(f"{motivo} O campo foi ignorado; o cliente foi importado.")
+                incons.append({"planilha": "clientes", "linha": line, "tipo": "campo_ignorado",
+                               "tipo_rotulo": TIPOS["campo_ignorado"], "identificacao": row["cnpj"] or clean["codigo"] or "",
+                               "nome": row["nome"], "motivo": motivo, "conteudo": _content(table["header"], cells)})
         if errors:
             reject("invalido", *(_field_error(k, msg) for k, msg in errors.items()))
             continue
@@ -633,6 +683,13 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
                 row["avisos"].append(f"Código da planilha ({clean['codigo']}) é diferente do cadastrado "
                                      f"({entity.values['codigo']}); o cadastro foi mantido.")
 
+        # --- dados adicionais (nunca apagados por célula vazia)
+        incoming_extras = extras_from(raw, extra_fields)
+        base_extras = entity.extras if entity is not None else {}
+        merged_extras = merge_extras(base_extras, incoming_extras)
+        extra_changes = [{"campo": CLIENT_EXTRA_LABELS[k], "de": base_extras.get(k), "para": merged_extras[k]}
+                         for k in incoming_extras if base_extras.get(k) != merged_extras[k]] if entity is not None else []
+
         # --- campos do cliente
         if entity is None:
             merged = {k: clean[k] for k in CLIENT_FIELDS}
@@ -652,7 +709,7 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
                 reject("invalido", "A substituição por campos vazios deixaria o cliente sem nome.")
                 continue
             changes = [{"campo": FIELD_LABELS[k], "de": entity.values[k], "para": merged[k]}
-                       for k in merge_fields if merged[k] != entity.values[k]]
+                       for k in merge_fields if merged[k] != entity.values[k]] + extra_changes
 
         # --- valor do mês
         pay_status = None
@@ -669,13 +726,14 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
 
         # --- aceita a linha
         if entity is None:
-            entity = _Entity(db_id=None, values=merged, is_new=True)
+            entity = _Entity(db_id=None, values=merged, is_new=True, extras=merged_extras)
             register(entity)
             row["status"] = "novo"
         else:
-            entity.fields_changed = entity.fields_changed or bool(
+            entity.fields_changed = entity.fields_changed or bool(extra_changes) or bool(
                 [k for k in merge_fields if merged[k] != entity.values[k]])
             entity.values = merged
+            entity.extras = merged_extras
             if merged.get("cnpj"):
                 ent_by_cnpj[merged["cnpj"]] = entity
             changed = bool(changes) or pay_status == "novo"
@@ -703,7 +761,7 @@ def analyze(db, table: dict | None, mapping: dict | None, *, default_month: str 
     if contracts is not None:
         ctx = SimpleNamespace(
             table=contracts["table"], mapping=contracts["mapping"], chave=chave, default_month=default_month,
-            faixas=faixas,
+            faixas=faixas, fonte=load_fonte_valor(db),
             replace_empty=replace_empty, db=db, db_payments=db_payments,
             find_entity=lambda kind, key: (find_cnpj(key) if kind == "cnpj" else find_code(key)) if key else None,
             rejected_line=lambda kind, key: rejected_keys.get((kind, key)),
@@ -786,7 +844,7 @@ def _json(rows: list[dict]) -> str:
 
 _CLIENT_COLS = ", ".join(f"{f} text" for f in CLIENT_FIELDS)
 _CONTRACT_COLS = ("numero text, produto text, situacao text, data_inicio text, data_fim text, "
-                  "parcela_centavos bigint, observacoes text")
+                  "parcela_centavos bigint, observacoes text, dados_extras jsonb")
 
 
 def gravar_pagamentos(db, pagamentos: list[dict], origem: str, stamp: str) -> None:
@@ -808,11 +866,12 @@ def plan_to_json(analysis: dict) -> dict:
     for e in analysis["_entidades"]:
         entidades.append({
             "is_new": e.is_new, "db_id": e.db_id, "fields_changed": e.fields_changed,
-            "values": {k: e.values.get(k) for k in CLIENT_FIELDS}, "pending": e.pending,
+            "values": {k: e.values.get(k) for k in CLIENT_FIELDS}, "pending": e.pending, "extras": e.extras,
             "recs": [{"numero": r.numero, "is_new": r.is_new, "db_id": r.db_id, "fields_changed": r.fields_changed,
                       "values": {k: r.values.get(k) for k in ("produto", "situacao", "data_inicio", "data_fim",
                                                               "parcela_centavos", "observacoes")},
-                      "changed_months": r.changed_months} for r in e.contract_recs]})
+                      "changed_months": r.changed_months, "extras": getattr(r, "extras", {})}
+                     for r in e.contract_recs]})
     return {"resumo": analysis["resumo"], "entidades": entidades}
 
 
@@ -820,11 +879,12 @@ def plan_from_json(data: dict) -> dict:
     entidades = []
     for item in data["entidades"]:
         e = SimpleNamespace(is_new=item["is_new"], db_id=item["db_id"], fields_changed=item["fields_changed"],
-                            values=item["values"], pending=item["pending"], contract_recs=[])
+                            values=item["values"], pending=item["pending"], contract_recs=[],
+                            extras=item.get("extras") or {})
         for r in item["recs"]:
             rec = SimpleNamespace(numero=r["numero"], is_new=r["is_new"], db_id=r["db_id"], entity=e,
                                   fields_changed=r["fields_changed"], values=r["values"],
-                                  changed_months=r["changed_months"])
+                                  changed_months=r["changed_months"], extras=r.get("extras") or {})
             rec.dirty = rec.is_new or rec.fields_changed or bool(rec.changed_months)
             e.contract_recs.append(rec)
         entidades.append(e)
@@ -854,22 +914,24 @@ def apply(db, analysis: dict, filename: str, filename_contracts: str | None = No
             if db.execute("SELECT 1 FROM clientes WHERE lower(codigo) = ANY(%s::text[]) OR cnpj = ANY(%s::text[]) LIMIT 1",
                           (codigos, cnpjs)).fetchone():
                 raise ImportFailure(changed_msg)
-            dados = [{**{k: e.values.get(k) for k in CLIENT_FIELDS}, "busca": search_blob(e.values)} for e in novos]
+            dados = [{**{k: e.values.get(k) for k in CLIENT_FIELDS}, "busca": search_blob(e.values),
+                      "dados_extras": getattr(e, "extras", None) or {}} for e in novos]
             cols = ", ".join(CLIENT_FIELDS)
             ids = db.execute(
-                f"INSERT INTO clientes ({cols}, busca, criado_em, atualizado_em) "
-                f"SELECT {cols}, busca, %s, %s FROM jsonb_to_recordset(%s::jsonb) AS v({_CLIENT_COLS}, busca text) "
+                f"INSERT INTO clientes ({cols}, busca, dados_extras, criado_em, atualizado_em) "
+                f"SELECT {cols}, busca, dados_extras, %s, %s FROM jsonb_to_recordset(%s::jsonb) "
+                f"AS v({_CLIENT_COLS}, busca text, dados_extras jsonb) "
                 "RETURNING id, lower(codigo)", (stamp, stamp, _json(dados))).fetchall()
             por_codigo = {codigo: cid for cid, codigo in ids}
             for e in novos:
                 e.db_id = por_codigo[e.values["codigo"].lower()]
         # 2) Clientes existentes com dados alterados.
         if alterados:
-            dados = [{**{k: e.values.get(k) for k in CLIENT_FIELDS}, "busca": search_blob(e.values), "id": e.db_id}
-                     for e in alterados]
-            sets = ", ".join(f"{k} = v.{k}" for k in list(CLIENT_FIELDS) + ["busca"])
+            dados = [{**{k: e.values.get(k) for k in CLIENT_FIELDS}, "busca": search_blob(e.values), "id": e.db_id,
+                      "dados_extras": getattr(e, "extras", None) or {}} for e in alterados]
+            sets = ", ".join(f"{k} = v.{k}" for k in list(CLIENT_FIELDS) + ["busca", "dados_extras"])
             db.execute(f"UPDATE clientes c SET {sets}, atualizado_em = %s "
-                       f"FROM jsonb_to_recordset(%s::jsonb) AS v(id bigint, {_CLIENT_COLS}, busca text) "
+                       f"FROM jsonb_to_recordset(%s::jsonb) AS v(id bigint, {_CLIENT_COLS}, busca text, dados_extras jsonb) "
                        "WHERE c.id = v.id", (stamp, _json(dados)))
 
         # 3) Contratos.
@@ -880,7 +942,8 @@ def apply(db, analysis: dict, filename: str, filename_contracts: str | None = No
             v = rec.values
             return {"numero": rec.numero, "produto": v.get("produto"), "situacao": v.get("situacao"),
                     "data_inicio": v.get("data_inicio"), "data_fim": v.get("data_fim"),
-                    "parcela_centavos": v.get("parcela_centavos"), "observacoes": v.get("observacoes")}
+                    "parcela_centavos": v.get("parcela_centavos"), "observacoes": v.get("observacoes"),
+                    "dados_extras": getattr(rec, "extras", None) or {}}
 
         novos_ct = [r for r in recs if r.is_new]
         if novos_ct:
@@ -890,8 +953,9 @@ def apply(db, analysis: dict, filename: str, filename_contracts: str | None = No
             dados = [{**contrato(r), "cliente_id": r.entity.db_id} for r in novos_ct]
             ids = db.execute(
                 "INSERT INTO contratos (cliente_id, numero, produto, situacao, data_inicio, data_fim, "
-                "valor_parcela_futuro_centavos, observacoes, criado_em, atualizado_em) "
+                "valor_parcela_futuro_centavos, observacoes, dados_extras, criado_em, atualizado_em) "
                 "SELECT cliente_id, numero, produto, situacao, data_inicio, data_fim, parcela_centavos, observacoes, "
+                "dados_extras, "
                 f"%s, %s FROM jsonb_to_recordset(%s::jsonb) AS v(cliente_id bigint, {_CONTRACT_COLS}) "
                 "RETURNING id, lower(numero)", (stamp, stamp, _json(dados))).fetchall()
             por_numero = {numero: cid for cid, numero in ids}
@@ -903,7 +967,7 @@ def apply(db, analysis: dict, filename: str, filename_contracts: str | None = No
             db.execute(
                 "UPDATE contratos c SET produto = v.produto, situacao = v.situacao, data_inicio = v.data_inicio, "
                 "data_fim = v.data_fim, valor_parcela_futuro_centavos = v.parcela_centavos, "
-                "observacoes = v.observacoes, atualizado_em = %s "
+                "observacoes = v.observacoes, dados_extras = v.dados_extras, atualizado_em = %s "
                 f"FROM jsonb_to_recordset(%s::jsonb) AS v(id bigint, {_CONTRACT_COLS}) WHERE c.id = v.id",
                 (stamp, _json(dados)))
         valores = [{"contrato_id": r.db_id, "mes": m, "valor": c} for r in recs for m, c in r.changed_months.items()]

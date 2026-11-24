@@ -127,6 +127,16 @@
           </header>
           <div id="curva-body"></div>
         </section>
+        <section class="card curva-card" aria-labelledby="fonte-title">
+          <header class="curva-head">
+            <h2 id="fonte-title">Fonte do valor pago (Curva ABC)</h2>
+            <p class="muted">A planilha de contratos não traz os valores efetivamente recebidos. O valor do mês de cada
+              contrato vem do campo <b>“Valor mensal pago”</b> do mapeamento de contratos (padrão: coluna “Valor Atual”,
+              a mensalidade recorrente). “Valor Original”, “Valor Parcela Futuro” e quantidades de parcelas nunca são usados.
+              O valor do mês do cliente é a soma dos seus contratos. Valem para as próximas importações.</p>
+          </header>
+          <div id="fonte-body"></div>
+        </section>
         <div id="config-lists"></div>
       </section>
     </main>
@@ -179,6 +189,7 @@
           </div>
           <div class="history" id="history" hidden></div>
           <div class="history" id="contracts-box" hidden></div>
+          <div class="history" id="extras-box" hidden></div>
         </fieldset>
 
         <fieldset>
@@ -247,8 +258,19 @@
     <footer class="modal-foot" id="import-foot"></footer>
   </dialog>
 
+  <!-- Importação automática: clientes e depois contratos -->
+  <dialog id="dlg-auto" class="modal modal-lg">
+    <header class="modal-head">
+      <h2>Importar planilhas</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Fechar">&times;</button>
+    </header>
+    <div class="modal-body" id="auto-body"></div>
+    <footer class="modal-foot" id="auto-foot"></footer>
+  </dialog>
+
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <script src="{{ url_for('static', filename='planilhas.js') }}?v={{ version }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
+  <script src="{{ url_for('static', filename='importacao.js') }}?v={{ version }}"></script>
 </body>
 </html>

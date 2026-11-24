@@ -1,6 +1,7 @@
 """Acesso aos dados de clientes e pagamentos mensais."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from collections.abc import Mapping
 
@@ -22,7 +23,46 @@ def serialize(row: Mapping) -> dict:
     if "valor_centavos" in keys:
         data["valor_centavos"] = row["valor_centavos"]
         data["classificacao"] = row["classificacao"]
+    if "dados_extras" in keys:
+        data["dados_extras"] = _json_obj(row["dados_extras"])
     return data
+
+
+def _json_obj(value) -> dict:
+    """JSONB pode chegar como dict (psycopg) ou texto (outros drivers)."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+# --------------------------------------------------------------------------- configurações gerais
+
+# Fonte do valor pago no mês (Curva ABC). A planilha de contratos real não tem uma coluna de valores
+# recebidos: o valor do mês do contrato é o campo "Valor mensal pago" do mapeamento (por padrão, a coluna
+# "Valor Atual", a mensalidade recorrente). Estas opções definem quando ele conta como pago no mês.
+FONTE_VALOR_PADRAO = {
+    "ativo": True,               # False: a importação de contratos não altera os valores do mês
+    "excluir_encerrados": True,  # contrato com "Encerrado = Sim" conta R$ 0,00 no mês
+    "excluir_atrasados": False,  # contrato com parcelas em atraso conta R$ 0,00 no mês
+}
+
+
+def load_fonte_valor(db) -> dict:
+    row = db.execute("SELECT valor FROM configuracoes_sistema WHERE chave = 'fonte_valor_pago'").fetchone()
+    salvo = _json_obj(row["valor"]) if row else {}
+    return {k: bool(salvo.get(k, padrao)) for k, padrao in FONTE_VALOR_PADRAO.items()}
+
+
+def save_fonte_valor(db, valores: dict) -> dict:
+    """Grava as opções (só as conhecidas, como booleanos). Não faz commit."""
+    fonte = {k: bool(valores.get(k, padrao)) for k, padrao in FONTE_VALOR_PADRAO.items()}
+    db.execute("INSERT INTO configuracoes_sistema (chave, valor, atualizado_em) VALUES ('fonte_valor_pago', %s::jsonb, %s) "
+               "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
+               (json.dumps(fonte), now()))
+    return fonte
 
 
 # --------------------------------------------------------------------------- consultas
@@ -223,13 +263,13 @@ def find_contract(db, numero: str | None):
 def list_client_contracts(db, client_id: int) -> list[dict]:
     """Contratos do cliente, com o último valor mensal registrado de cada um."""
     rows = db.execute(
-        "SELECT ct.id, ct.numero, ct.produto, ct.situacao, ct.data_inicio, ct.data_fim, ct.observacoes, "
+        "SELECT ct.id, ct.numero, ct.produto, ct.situacao, ct.data_inicio, ct.data_fim, ct.observacoes, ct.dados_extras, "
         "ct.valor_parcela_futuro_centavos AS parcela_futuro_centavos, "
         "(SELECT mes_referencia FROM contrato_valores WHERE contrato_id = ct.id ORDER BY mes_referencia DESC LIMIT 1) AS ultimo_mes, "
         "(SELECT valor_centavos FROM contrato_valores WHERE contrato_id = ct.id ORDER BY mes_referencia DESC LIMIT 1) AS ultimo_valor_centavos "
         "FROM contratos ct WHERE ct.cliente_id = %s ORDER BY lower(ct.numero) COLLATE \"C\", ct.numero COLLATE \"C\"",
         (client_id,)).fetchall()
-    return [dict(r) for r in rows]
+    return [{**dict(r), "dados_extras": _json_obj(r["dados_extras"])} for r in rows]
 
 
 def insert_contract(db, client_id: int, numero: str, values: dict) -> int:
