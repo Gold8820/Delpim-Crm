@@ -109,6 +109,16 @@ BEGIN
     END IF;
 END $$;
 
+-- 6b) Perfil comercial do cliente (classificação automática, editável). Só adiciona colunas.
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS tipo_cadastro TEXT;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS escritorio_contabil TEXT;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS situacao_contabil TEXT;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS segmento_nome TEXT;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS regiao1 TEXT;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS regiao2 TEXT;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS perfil_auto JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS perfil_manual JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 -- 7) Conferência: RLS ligado, política presente, nenhum privilégio para anon/authenticated.
 SELECT c.relname AS tabela,
        c.relrowsecurity AS rls_ativo,

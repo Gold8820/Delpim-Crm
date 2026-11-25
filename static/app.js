@@ -117,6 +117,7 @@ async function loadMeta() {
     if (f.min_centavos === 0) return `até ${brl(f.max_centavos)}`;
     return `${brl(f.min_centavos)} a ${brl(f.max_centavos)}`;
   };
+  if (window.perfilMeta) window.perfilMeta();
   $("#legend").innerHTML = faixas.map((f) => `<span><i class="dot cls-${esc(f.classificacao)}"></i><b>${esc(f.classificacao)}</b> ${esc(range(f))}</span>`).join("");
 }
 
@@ -125,10 +126,12 @@ async function loadClients() {
   table.classList.add("loading");
   const params = new URLSearchParams({
     q: state.q, classificacao: state.cls, segmento: state.seg, mes: state.mes,
-    ordem: state.sort, direcao: state.dir, pagina: state.page, por_pagina: state.perPage,
+    ordem: state.sort, direcao: state.dir, pagina: state.page, por_pagina: state.perPage, ...(state.pf || {}),
   });
+  const seq = (state.reqSeq = (state.reqSeq || 0) + 1);   // filtros trocados rápido: só a última resposta vale
   try {
     const data = await api(`/api/clientes?${params}`);
+    if (seq !== state.reqSeq) return;
     const lastPage = Math.max(1, Math.ceil(data.total / data.por_pagina));
     if (state.page > lastPage) { state.page = lastPage; return loadClients(); }
     state.total = data.total;
@@ -141,7 +144,7 @@ async function loadClients() {
 }
 
 function renderTable(data) {
-  const filtered = state.q || state.cls || state.seg;
+  const filtered = state.q || state.cls || state.seg || Object.values(state.pf || {}).some(Boolean);
   const n = data.total_geral;
   $("#subtitle").textContent = n === 0
     ? "Nenhum cliente cadastrado"
@@ -155,6 +158,7 @@ function renderTable(data) {
     return `<tr data-id="${c.id}">
       <td class="code">${esc(c.codigo)}</td>
       <td><div class="client-name">${esc(c.nome)}</div>${sub}</td>
+      <td class="perfil-cell">${esc(c.tipo_cadastro || "—")}<div class="client-sub">${esc([c.regiao1, c.regiao2].filter(Boolean).join(" · ") || "")}${c.situacao_contratual === "Não contratado" ? `<span class="tag-sem">sem contrato</span>` : ""}</div></td>
       <td>${esc(c.cnpj || "—")}</td>
       <td class="truncate">${esc(c.cidade || "—")}</td>
       <td>${esc(c.estado || "—")}</td>
@@ -238,6 +242,7 @@ function wireMain() {
     if (b.dataset.empty === "new") openClientForm();
     if (b.dataset.empty === "import") (window.openAutoImport || openImport)();
     if (b.dataset.empty === "clear") {
+      if (window.limparFiltros) { window.limparFiltros(); return; }
       Object.assign(state, { q: "", cls: "", seg: "", page: 1 });
       $("#search").value = ""; $("#f-class").value = ""; $("#f-segment").value = "";
       loadClients();
@@ -390,9 +395,11 @@ async function openClientForm(id = null) {
       clientForm.payments = c.pagamentos;
       clientForm.contracts = c.contratos || [];
       clientForm.extras = c.dados_extras || {};
+      if (window.perfilPreencher) window.perfilPreencher(c);
     } catch (err) { toast(err.message, "error"); return; }
   } else {
     defaultMonth = state.meta.mes_atual;
+    if (window.perfilPreencher) window.perfilPreencher(null);
   }
   $("#c-mes").innerHTML = monthOptions(defaultMonth);
   $("#c-mes").value = defaultMonth;
@@ -420,6 +427,7 @@ function wireClientForm() {
     e.preventDefault();
     clearFormErrors();
     const payload = Object.fromEntries(new FormData(form).entries());
+    if (window.perfilEdicoes) payload.perfil = window.perfilEdicoes();
     const btn = $("#client-save");
     btn.disabled = true;
     try {
@@ -491,7 +499,11 @@ function showView(name) {
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   document.title = settings ? "Configurações de importação" : "Clientes";
-  if (settings) { loadConfigs(); loadCurva(); if (window.loadFonteValor) window.loadFonteValor(); }
+  if (settings) {
+    loadConfigs(); loadCurva();
+    if (window.loadFonteValor) window.loadFonteValor();
+    if (window.loadRegioes) window.loadRegioes();
+  }
 }
 const routeFromHash = () => showView(location.hash === "#configuracoes" ? "configuracoes" : "clientes");
 

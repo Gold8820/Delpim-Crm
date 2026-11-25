@@ -16,6 +16,7 @@ from datetime import datetime
 
 from types import SimpleNamespace
 
+from . import perfil
 from .classification import classify
 from .contracts import TIPOS, process as process_contracts
 from .repository import (_json_obj, load_fonte_valor, find_by_cnpj, find_by_codigo, find_contract, insert_client, insert_contract,
@@ -1037,11 +1038,15 @@ def apply(db, analysis: dict, filename: str, filename_contracts: str | None = No
              summary["linhas_lidas"] + summary["contratos_lidos"], summary["clientes_novos"],
              summary["clientes_atualizados"], summary["clientes_sem_alteracao"],
              summary["linhas_rejeitadas"], payments_written, contracts_written, summary["contratos_rejeitados"]))
+        # 5) Perfil comercial (tipo, contabilidade, segmento, regiões) de toda a carteira: depende do nome e
+        #    dos contratos relacionados, por isso é recalculado depois de gravar. Edições manuais são preservadas.
+        perfil_resultado = perfil.reclassificar(db)
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return {**summary, "pagamentos_gravados": payments_written, "contratos_gravados": contracts_written}
+    return {**summary, "pagamentos_gravados": payments_written, "contratos_gravados": contracts_written,
+            "perfil": perfil_resultado}
 
 
 def inconsistencies_csv(analysis: dict) -> str:

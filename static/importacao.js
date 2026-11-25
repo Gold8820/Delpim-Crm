@@ -160,6 +160,7 @@
         truncado: previa.truncado,
       });
       info.inconsistencias.push(...(previa.inconsistencias || []).filter((i) => i.planilha === papel));
+      if (feito.perfil) auto.perfil = feito.perfil;   // classificação da carteira após esta etapa (a última vale)
     } catch (err) {
       Object.assign(info, { estado: "erro", texto: err.message || "Erro inesperado." });
     }
@@ -201,7 +202,22 @@
   }
 
   function todasInconsistencias() {
-    return ETAPAS.flatMap((e) => (auto.etapas[e.papel]?.inconsistencias || []).map((i) => ({ ...i, arquivo: auto.etapas[e.papel].arquivo })));
+    const lista = ETAPAS.flatMap((e) => (auto.etapas[e.papel]?.inconsistencias || []).map((i) => ({ ...i, arquivo: auto.etapas[e.papel].arquivo })));
+    // perfil comercial: identificação duvidosa (o campo ficou sem classificação)
+    for (const d of auto.perfil?.duvidas || []) {
+      lista.push({ arquivo: auto.etapas.clientes?.arquivo || "", planilha: "clientes", linha: "", tipo_rotulo: "Classificação a revisar",
+        identificacao: d.documento || d.codigo, nome: d.nome, motivo: `${d.campo}: ${d.motivo}`, conteudo: "" });
+    }
+    return lista;
+  }
+
+  function resumoPerfil() {
+    const p = auto.perfil;
+    if (!p) return "";
+    const tipos = Object.entries(p.por_tipo || {}).sort((a, b) => b[1] - a[1])
+      .map(([t, q]) => `<span class="pill">${esc(t)}: <b>${n(q)}</b></span>`).join(" ");
+    return `<p class="muted">Perfil comercial da carteira (tipo, contabilidade, segmento e regiões) atualizado.
+      ${p.duvidas?.length ? `${n(p.duvidas.length)} identificação(ões) duvidosa(s) no relatório.` : ""}</p><div class="pills">${tipos}</div>`;
   }
 
   function resumoGeral() {
@@ -218,6 +234,7 @@
     return `<section class="auto-etapa auto-geral"><h3>Resumo geral</h3>
       <p class="summary-line">${n(processados)} registro(s) processado(s) · ${n(gravados)} gravado(s) (novos ou atualizados) ·
         ${n(erros)} com erro · ${n(inc)} inconsistência(s)${falhas ? ` · <b>${falhas} planilha(s) não importada(s)</b>` : ""}.</p>
+      ${resumoPerfil()}
       ${inc ? `<button type="button" class="btn btn-sm" id="auto-csv">Baixar inconsistências (CSV para Excel)</button>` : `<p class="muted">Nenhuma inconsistência encontrada.</p>`}
       ${ok.some((i) => i.truncado) ? `<p class="muted">A lista de inconsistências mostra até 1.000 itens por planilha.</p>` : ""}</section>`;
   }

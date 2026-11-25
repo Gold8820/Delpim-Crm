@@ -22,6 +22,14 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 11 — perfil comercial (tipo, contabilidade, segmento, regiões, vendedor) e filtros — 365 testes
+- **Regras:** `clientes/perfil.py` (`identificar`, `reclassificar`, `mesclar`, `salvar_manual`, mapa de regiões). Testes com os exemplos reais em `tests/test_perfil.py` e de ponta a ponta em `tests/test_perfil_integracao.py`; `test_planilhas_reais.py` confere exemplos reais.
+- **Banco (produção, 24/11/2026, só adição, sem alterar dados):** `clientes.tipo_cadastro, escritorio_contabil, situacao_contabil, segmento_nome, regiao1, regiao2, perfil_auto (jsonb), perfil_manual (jsonb)`. Mapa de regiões em `configuracoes_sistema` (chave `mapa_regioes`; sem registro = padrão do código). Situação contratual = EXISTS em contratos.
+- **Quando roda:** no fim de `importer.apply` (mesma transação, carteira inteira, ~0,13 ms/cliente no CPython), ao salvar um cliente (só ele), ao salvar o mapa de regiões e em `POST /api/perfil/reclassificar` (botão "Reclassificar carteira agora").
+- **API:** filtros novos em `/api/clientes` (`tipo_cadastro, escritorio_contabil, situacao_contabil, segmento_nome, regiao1, regiao2, vendedor` — `__vazio__` = sem classificação; `contrato=sim|nao`); `POST /api/clientes/vendedor-em-lote` (exige filtro); `GET/PUT /api/configuracoes/regioes`; `/api/meta` traz `perfil.opcoes`. PUT do cliente aceita `perfil: {campo: valor}` só com os campos alterados.
+- **Tela:** `static/perfil.js` (filtros, ficha "Perfil comercial", diálogo de vendedor em lote, card de regiões); coluna "Tipo / Região"; respostas antigas da lista são descartadas (filtros trocados rápido).
+- **Publicado:** só no Worker de validação. Produção intocada. A carteira de produção ainda não foi classificada (rodará na próxima importação ou no botão de reclassificar).
+
 ### Rodada 10 — botão Importar abre direto a seleção de arquivos + identificação automática — 299 testes
 - **Tela:** `static/importacao.js` reescrito: o botão Importar chama `input[type=file][multiple]` (sem tela intermediária); os arquivos são lidos no navegador e enviados a `POST /api/importacao/identificar` (até 10 arquivos × 200 linhas, não grava nada). Problema (formato, não identificado, dois do mesmo tipo) → só mensagem, nada importado. Depois: etapa clientes → etapa contratos → resumo geral (fluxo da Rodada 9). Mês = `meta.mes_atual`.
 - **Regra:** `importer.identificar_planilha` (contratos: Nº + Documento Cliente; clientes: Documento/código + Razão Social/Fantasia; os dois → margem ≥ 3 colunas reconhecidas; um só, mas com cara clara do outro tipo → não identificada, com a coluna que falta).

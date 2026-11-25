@@ -252,6 +252,33 @@ Menu **Configurações de importação** → seção **Configuração da Curva A
 - **Importação:** a coluna **Observações** (ou *Observações do cliente*, *Obs*, etc.) é sugerida para clientes; **Observacao** (singular) e *Observações do contrato* são sugeridas para contratos. A coluna pode ser salva no mapeamento padrão, como as demais.
 - **Preservação nas reimportações:** célula vazia nunca apaga a observação cadastrada, mesmo com a opção "substituir por vazios". Se não houver observação cadastrada, o texto da planilha é usado. Se a planilha trouxer um texto diferente do cadastrado, o cadastrado é mantido e a prévia mostra um aviso. Para trocar o texto, edite manualmente na ficha.
 
+## Perfil comercial (classificação automática e filtros)
+
+Campos do cadastro preenchidos automaticamente a cada importação (e ao salvar um cliente), a partir dos padrões de
+nome `RAZÃO SOCIAL * NOME FANTASIA * CONTABILIDADE` (`clientes/perfil.py`). O nome original nunca é alterado.
+
+- **Tipo de cadastro:** `(INATIVO)` no início → Ex-cliente; nome começando com REVENDA → Revenda (REVENDA entre
+  parênteses, como "(REVENDA JORGE JAPONES)", não conta); FORNECEDOR → Fornecedor; nome fantasia formado só por
+  escritório contábil → Contabilidade; `(SEM CONTRATO)` → Cliente sem contrato; com contrato relacionado → Cliente.
+  Sem contrato e sem marcação: fica sem classificação (nunca vira Lead sozinho; Lead só com `(LEAD)`).
+- **Escritório de contabilidade:** a parte com CONTABILIDADE/CONTADOR (inclusive erros de digitação comuns), sem
+  telefone. "CONTABILIDADE NÃO UTILIZA" / "SOLICITAR CONTATO" vão para **Atendimento contábil**, não para o nome.
+- **Segmento:** duas primeiras palavras significativas do nome fantasia (ADEGA PRONTO SOCORRO → ADEGA PRONTO),
+  ignorando prefixos e parênteses. O antigo campo "Segmento" (coluna Ramo Atividade) passa a se chamar **Ramo de atividade**.
+- **Situação contratual:** Contratado / Não contratado, sempre calculada pelos contratos relacionados (não é gravada).
+- **Região 1 / Região 2:** zona e bairro/distrito pelo mapeamento configurável (Configurações > Regiões; inicial: os
+  96 distritos de São Paulo). "(Zona Leste)" escrito no bairro vale mais que o mapeamento. Sem regra: Região 1 vazia.
+- **Vendedor responsável:** importado quando a planilha tem a coluna (Vendedor, Representante, Consultor...); senão é
+  preservado. Atribuição manual na ficha ou em lote ("Atribuir vendedor…" aplica aos clientes da lista filtrada).
+- **Edição manual:** o campo corrigido na ficha fica marcado como manual e não é sobrescrito pelas importações, a não
+  ser que a informação da planilha que gerou o valor mude (ex.: o nome passou a ter `(INATIVO)`).
+- **Dúvidas** (contabilidade fora do padrão, ramo Contabilidade com nome de outro negócio, (SEM CONTRATO) com contrato,
+  bairro de duas regiões): o campo fica vazio e o caso vai para o CSV de inconsistências como "Classificação a revisar".
+- **Filtros combináveis** na tela principal: tipo, situação contratual, escritório, segmento, regiões, vendedor (mais
+  classificação ABC, ramo e pesquisa). Ex.: Revenda + Zona Leste; A+ + Região 2 Penha; Ex-cliente + CONTABILIDADE BATISTA.
+- Planilhas reais (banco de teste): 481 Clientes, 434 Ex-clientes, 142 Contabilidades, 85 sem contrato, 14 Fornecedores,
+  5 Revendas, 113 sem classificação, 6 dúvidas.
+
 ## Importação automática (clientes e depois contratos)
 
 Botão **Importar planilha**: abre direto a janela de seleção de arquivos do Windows (seleção múltipla; `.xlsx`,

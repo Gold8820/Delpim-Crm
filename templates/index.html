@@ -66,7 +66,7 @@
           </select>
         </label>
         <label class="filter">
-          <span>Segmento</span>
+          <span>Ramo de atividade</span>
           <select id="f-segment"><option value="">Todos</option></select>
         </label>
         <label class="filter">
@@ -74,6 +74,7 @@
           <select id="f-month"></select>
         </label>
       </section>
+      <section class="card toolbar toolbar-perfil" id="perfil-filtros" aria-label="Filtros do perfil comercial"></section>
 
       <div class="legend" id="legend" aria-label="Faixas de classificação"></div>
 
@@ -84,10 +85,11 @@
               <tr>
                 <th data-sort="codigo">Código</th>
                 <th data-sort="nome">Cliente</th>
+                <th>Tipo / Região</th>
                 <th data-sort="cnpj">CNPJ</th>
                 <th data-sort="cidade">Cidade</th>
                 <th data-sort="estado">Estado</th>
-                <th data-sort="segmento">Segmento</th>
+                <th data-sort="segmento">Ramo</th>
                 <th data-sort="vendedor">Vendedor responsável</th>
                 <th data-sort="valor" class="num">Valor pago no mês</th>
                 <th data-sort="classificacao">Classificação</th>
@@ -137,6 +139,15 @@
           </header>
           <div id="fonte-body"></div>
         </section>
+        <section class="card curva-card" aria-labelledby="regioes-title">
+          <header class="curva-head">
+            <h2 id="regioes-title">Regiões e classificação automática</h2>
+            <p class="muted">Mapeamento geográfico usado para preencher a <b>Região 1</b> (zona) e a <b>Região 2</b> (bairro/distrito)
+              a partir do bairro e da cidade do cadastro. Sem regra correspondente, a Região 1 fica vazia (nunca é inventada).
+              Ao salvar, a carteira é reclassificada; edições manuais são preservadas.</p>
+          </header>
+          <div id="regioes-body"></div>
+        </section>
         <div id="config-lists"></div>
       </section>
     </main>
@@ -164,6 +175,21 @@
           </div>
         </fieldset>
 
+        <fieldset id="perfil-box">
+          <legend>Perfil comercial</legend>
+          <p class="muted perfil-ajuda">Preenchido automaticamente pela importação (nome, contratos e bairro). Você pode corrigir:
+            a edição manual é preservada nas próximas importações enquanto a planilha não trouxer informação nova.</p>
+          <div class="grid">
+            <div class="field span-4"><label for="pf-tipo_cadastro">Tipo de cadastro</label><select id="pf-tipo_cadastro" data-perfil="tipo_cadastro"></select><small class="dica" data-pf-dica="tipo_cadastro"></small><small class="err"></small></div>
+            <div class="field span-4"><label>Situação contratual</label><div class="readonly" id="pf-contratual">—</div><small class="dica">pelos contratos relacionados</small></div>
+            <div class="field span-4"><label for="pf-segmento_nome">Segmento</label><input id="pf-segmento_nome" data-perfil="segmento_nome" maxlength="120" list="dl-pf-segmento"><datalist id="dl-pf-segmento"></datalist><small class="dica" data-pf-dica="segmento_nome"></small><small class="err"></small></div>
+            <div class="field span-5"><label for="pf-escritorio_contabil">Escritório de contabilidade</label><input id="pf-escritorio_contabil" data-perfil="escritorio_contabil" maxlength="120" list="dl-pf-escritorio"><datalist id="dl-pf-escritorio"></datalist><small class="dica" data-pf-dica="escritorio_contabil"></small><small class="err"></small></div>
+            <div class="field span-3"><label for="pf-situacao_contabil">Atendimento contábil</label><select id="pf-situacao_contabil" data-perfil="situacao_contabil"></select><small class="dica" data-pf-dica="situacao_contabil"></small><small class="err"></small></div>
+            <div class="field span-2"><label for="pf-regiao1">Região 1</label><input id="pf-regiao1" data-perfil="regiao1" maxlength="120" list="dl-pf-regiao1" placeholder="Zona Leste"><datalist id="dl-pf-regiao1"></datalist><small class="dica" data-pf-dica="regiao1"></small><small class="err"></small></div>
+            <div class="field span-2"><label for="pf-regiao2">Região 2</label><input id="pf-regiao2" data-perfil="regiao2" maxlength="120" list="dl-pf-regiao2" placeholder="Penha"><datalist id="dl-pf-regiao2"></datalist><small class="dica" data-pf-dica="regiao2"></small><small class="err"></small></div>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>Endereço</legend>
           <div class="grid">
@@ -180,8 +206,8 @@
         <fieldset>
           <legend>Informações comerciais</legend>
           <div class="grid">
-            <div class="field span-4"><label for="c-segmento">Segmento</label><input id="c-segmento" name="segmento" maxlength="100" list="dl-segments"><datalist id="dl-segments"></datalist><small class="err"></small></div>
-            <div class="field span-4"><label for="c-vendedor">Vendedor responsável</label><input id="c-vendedor" name="vendedor" maxlength="100"><small class="err"></small></div>
+            <div class="field span-4"><label for="c-segmento">Ramo de atividade</label><input id="c-segmento" name="segmento" maxlength="100" list="dl-segments"><datalist id="dl-segments"></datalist><small class="err"></small></div>
+            <div class="field span-4"><label for="c-vendedor">Vendedor responsável</label><input id="c-vendedor" name="vendedor" maxlength="100" list="dl-vendedores"><datalist id="dl-vendedores"></datalist><small class="err"></small></div>
             <div class="field span-4"></div>
             <div class="field span-4"><label for="c-mes">Mês de referência</label><select id="c-mes" name="mes"></select><small class="err"></small></div>
             <div class="field span-4"><label for="c-valor">Valor total pago no mês</label><div class="money"><span>R$</span><input id="c-valor" name="valor" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><small class="err"></small></div>
@@ -259,6 +285,22 @@
   </dialog>
 
   <!-- Importação automática: clientes e depois contratos -->
+  <dialog id="dlg-vendedor" class="modal modal-sm">
+    <header class="modal-head">
+      <h2>Atribuir vendedor aos clientes filtrados</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Fechar">&times;</button>
+    </header>
+    <div class="modal-body">
+      <p id="vend-texto"></p>
+      <div class="field"><label for="vend-nome">Vendedor responsável</label><input id="vend-nome" maxlength="100" list="dl-vendedores" autocomplete="off"></div>
+      <div class="form-error" id="vend-erro" hidden></div>
+    </div>
+    <footer class="modal-foot">
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button type="button" class="btn btn-primary" id="vend-aplicar">Aplicar</button>
+    </footer>
+  </dialog>
+
   <dialog id="dlg-auto" class="modal modal-lg">
     <header class="modal-head">
       <h2>Importar planilhas</h2>
@@ -271,6 +313,7 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <script src="{{ url_for('static', filename='planilhas.js') }}?v={{ version }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
+  <script src="{{ url_for('static', filename='perfil.js') }}?v={{ version }}"></script>
   <script src="{{ url_for('static', filename='importacao.js') }}?v={{ version }}"></script>
 </body>
 </html>

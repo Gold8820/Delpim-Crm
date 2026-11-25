@@ -101,6 +101,24 @@ def test_planilhas_reais_importadas_em_duas_etapas(client, consulta):
     # relacionamento só por documento: nada relacionado por nome
     assert rk["contratos_relacionados"] == feito_k["contratos_novos"]
 
+    # perfil comercial identificado a partir dos nomes reais e dos contratos relacionados
+    perfil = feito_k["perfil"]
+    print("perfil por tipo:", perfil["por_tipo"], "| dúvidas:", len(perfil["duvidas"]))
+    linhas = [tuple(r) for r in consulta(
+        "SELECT razao_social, tipo_cadastro, escritorio_contabil, situacao_contabil, segmento_nome FROM clientes")]
+
+    def ex(prefixo):   # (tipo, escritório, situação contábil, segmento) do cliente cujo nome começa assim
+        achados = [r[1:] for r in linhas if (r[0] or "").startswith(prefixo)]
+        assert len(achados) == 1, (prefixo, len(achados))
+        return achados[0]
+
+    assert ex("REVENDA ALESSANDRO")[0] == "Revenda"
+    assert ex("ROUPA PHORTION MATRIZ")[1::2] == ("CONTABILIDADE AAS.ASSESSORIA CONTABIL", "ROUPA PHORTION")
+    assert ex("MERCADO MINI PRECO")[2:] == ("Solicitar contato", "MERCADO MINI")
+    assert ex("(INATIVO) HORTIFRUTI ALEXANDRINO LUCIANA")[:2] == ("Ex-cliente", "CONTABILIDADE BATISTA")
+    assert perfil["por_tipo"].get("Revenda", 0) >= 4 and len(perfil["duvidas"]) < 30
+    assert "Lead" not in perfil["por_tipo"]          # sem contrato não vira Lead
+
     # reimportação idêntica: nada novo, nada duplicado
     antes = [consulta(f"SELECT COUNT(*) FROM {t}")[0][0] for t in ("clientes", "contratos", "contrato_valores")]
     _, _, again_c = etapa(client, cli, "clientes")

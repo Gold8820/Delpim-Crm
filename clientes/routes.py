@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, current_app, jsonify, render_template, request
 
-from . import configs as cfg, db as dbmod, importer, repository as repo
+from . import configs as cfg, db as dbmod, importer, perfil, repository as repo
 from .classification import LABELS, describe_faixas, validate_faixas
 from .db import get_db
 from .validation import (CLIENT_EXTRA_LABELS, CONTRACT_EXTRA_LABELS, CONTRACT_LABELS, FIELD_LABELS, UFS, normalize, parse_money, to_note_checked)
@@ -45,6 +45,8 @@ def meta():
         "meses": repo.list_months(db),
         "mes_atual": date.today().strftime("%Y-%m"),
         "segmentos": repo.list_segments(db),
+        "perfil": {"opcoes": repo.list_perfil_opcoes(db), "tipos": list(perfil.TIPOS),
+                   "situacoes_contabeis": list(perfil.SITUACOES_CONTABEIS), "rotulos": perfil.ROTULOS},
         "faixas": describe_faixas(repo.load_faixas(db)),
         "ufs": UFS,
         "campos": [{"chave": k, "rotulo": v} for k, v in FIELD_LABELS.items()],
@@ -131,14 +133,74 @@ def curva_put():
 
 # --------------------------------------------------------------------------- clientes
 
+def _filtros(a) -> dict:
+    """Filtros da lista de clientes (combináveis), vindos da URL ou do corpo JSON."""
+    return {"q": str(a.get("q") or ""), "classificacao": str(a.get("classificacao") or ""),
+            "segmento": str(a.get("segmento") or ""), "mes": a.get("mes") or None,
+            "contrato": str(a.get("contrato") or ""),
+            **{k: str(a.get(k) or "")[:200] for k in repo.FILTROS_PERFIL}}
+
+
 @bp.get("/api/clientes")
 def list_clients():
     a = request.args
     return jsonify(repo.list_clients(
-        get_db(), q=a.get("q", ""), classificacao=a.get("classificacao", ""),
-        segmento=a.get("segmento", ""), mes=a.get("mes") or None,
-        sort=a.get("ordem", "codigo"), direction=a.get("direcao", "asc"),
-        page=a.get("pagina", 1), per_page=a.get("por_pagina", 25)))
+        get_db(), sort=a.get("ordem", "codigo"), direction=a.get("direcao", "asc"),
+        page=a.get("pagina", 1), per_page=a.get("por_pagina", 25), **_filtros(a)))
+
+
+@bp.post("/api/clientes/vendedor-em-lote")
+def assign_seller():
+    """Gestão da carteira: atribui o vendedor a todos os clientes da lista filtrada."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("filtros"), dict):
+        return error("Dados inválidos.")
+    vendedor = re.sub(r"\s+", " ", str(body.get("vendedor") or "")).strip() or None
+    if vendedor and len(vendedor) > 100:
+        return error("Use até 100 caracteres no nome do vendedor.")
+    filtros = _filtros(body["filtros"])
+    if not any(v for k, v in filtros.items() if k != "mes") and not body.get("todos"):
+        return error("Aplique ao menos um filtro antes de atribuir o vendedor em lote.")
+    db = get_db()
+    total = repo.atribuir_vendedor(db, vendedor, **filtros)
+    db.commit()
+    return jsonify({"alterados": total, "mensagem": f"Vendedor {'definido' if vendedor else 'removido'} em "
+                                                    f"{total} cliente(s)."})
+
+
+# --------------------------------------------------------------------------- perfil comercial
+
+@bp.post("/api/perfil/reclassificar")
+def perfil_reclassify():
+    """Recalcula a classificação automática de toda a carteira (preserva as edições manuais)."""
+    db = get_db()
+    resultado = perfil.reclassificar(db)
+    db.commit()
+    return jsonify(resultado)
+
+
+@bp.get("/api/configuracoes/regioes")
+def regioes_get():
+    mapa = perfil.carregar_mapa(get_db())
+    return jsonify({"texto": perfil.mapa_para_texto(mapa), "linhas": len(mapa)})
+
+
+@bp.put("/api/configuracoes/regioes")
+def regioes_put():
+    """Salva o mapeamento geográfico (Cidade; Bairro; Região 1; Região 2) e reclassifica a carteira."""
+    body = request.get_json(silent=True)
+    texto = body.get("texto") if isinstance(body, dict) else None
+    if not isinstance(texto, str) or len(texto) > 400_000:
+        return error("Dados inválidos.")
+    mapa, erros = perfil.mapa_de_texto(texto)
+    if erros:
+        return error("Corrija o mapeamento: " + " ".join(erros[:5]))
+    db = get_db()
+    perfil.salvar_mapa(db, mapa if mapa else [dict(m) for m in perfil.MAPA_PADRAO])
+    resultado = perfil.reclassificar(db)
+    db.commit()
+    return jsonify({**resultado, "linhas": len(mapa), "texto": perfil.mapa_para_texto(perfil.carregar_mapa(db)),
+                    "mensagem": f"Mapeamento salvo. {resultado['alterados']} cliente(s) com classificação alterada."})
 
 
 @bp.get("/api/clientes/<int:client_id>")
@@ -180,6 +242,12 @@ def _save_client(client_id: int | None, success_status: int = 200):
     if client_id is not None and repo.get_client(db, client_id) is None:
         return error("Cliente não encontrado.", 404)
     clean, errors = _validate_client_payload(db, payload, client_id)
+    edicoes = payload.get("perfil") if isinstance(payload.get("perfil"), dict) else {}
+    for campo, valor in edicoes.items():
+        if campo in perfil.CAMPOS:
+            erro = perfil.limpar_valor(campo, valor)[1]
+            if erro:
+                errors[campo] = erro
     if errors:
         return error("Corrija os campos destacados.", 400, errors)
     try:
@@ -189,6 +257,9 @@ def _save_client(client_id: int | None, success_status: int = 200):
             repo.update_client(db, client_id, clean)
         if clean["valor_centavos"] is not None:
             repo.upsert_payment(db, client_id, clean["mes"], clean["valor_centavos"], "manual")
+        # perfil: primeiro o automático (nome/bairro podem ter mudado), depois o que foi editado à mão
+        perfil.reclassificar(db, [client_id])
+        perfil.salvar_manual(db, client_id, edicoes)
         db.commit()
     except dbmod.IntegrityError:
         db.rollback()

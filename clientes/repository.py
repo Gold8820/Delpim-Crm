@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from collections.abc import Mapping
 
+from . import perfil
 from .classification import LABELS, classify, ordenar, validate_faixas
 from .validation import (CLIENT_FIELDS, display_name, format_cep, format_cnpj,
                          norm_search, search_blob)
@@ -25,6 +26,15 @@ def serialize(row: Mapping) -> dict:
         data["classificacao"] = row["classificacao"]
     if "dados_extras" in keys:
         data["dados_extras"] = _json_obj(row["dados_extras"])
+    for campo in perfil.CAMPOS:
+        if campo in keys:
+            data[campo] = row[campo]
+    if "perfil_manual" in keys:
+        manual = row["perfil_manual"]
+        manual = json.loads(manual) if isinstance(manual, str) else manual
+        data["perfil_manual"] = manual if isinstance(manual, list) else []
+    if "tem_contrato" in keys:
+        data["situacao_contratual"] = "Contratado" if row["tem_contrato"] else "Não contratado"
     return data
 
 
@@ -104,8 +114,25 @@ def list_segments(db) -> list[str]:
     return [r[0] for r in rows]
 
 
-def list_clients(db, *, q="", classificacao="", segmento="", mes=None,
-                 sort="codigo", direction="asc", page=1, per_page=25) -> dict:
+VAZIO = "__vazio__"    # valor do filtro "sem classificação"
+FILTROS_PERFIL = ("tipo_cadastro", "escritorio_contabil", "situacao_contabil", "segmento_nome", "regiao1",
+                  "regiao2", "vendedor")
+_TEM_CONTRATO = "EXISTS (SELECT 1 FROM contratos ct WHERE ct.cliente_id = c.id)"
+
+
+def list_perfil_opcoes(db) -> dict:
+    """Valores existentes de cada campo de perfil (para os filtros da tela principal)."""
+    opcoes = {}
+    for campo in FILTROS_PERFIL:
+        rows = db.execute(
+            f"SELECT MIN({campo}) FROM clientes WHERE {campo} IS NOT NULL AND {campo} <> '' "
+            f"GROUP BY lower({campo}) ORDER BY unaccent(lower(MIN({campo}))) COLLATE \"C\"").fetchall()
+        opcoes[campo] = [r[0] for r in rows]
+    return opcoes
+
+
+def _where(db, *, q="", classificacao="", segmento="", mes=None, contrato="", **perfil_filtros):
+    """Condições combináveis da lista de clientes (todas ao mesmo tempo, com E)."""
     mes = mes or latest_month(db)
     where = ["1=1"]
     params: dict = {"mes": mes}
@@ -121,18 +148,34 @@ def list_clients(db, *, q="", classificacao="", segmento="", mes=None,
     if segmento:
         where.append("lower(c.segmento) = lower(%(seg)s)")
         params["seg"] = segmento
+    for campo in FILTROS_PERFIL:
+        valor = str(perfil_filtros.get(campo) or "").strip()
+        if valor == VAZIO:
+            where.append(f"(c.{campo} IS NULL OR c.{campo} = '')")
+        elif valor:
+            where.append(f"lower(c.{campo}) = lower(%(f_{campo})s)")
+            params[f"f_{campo}"] = valor
+    if contrato == "sim":
+        where.append(_TEM_CONTRATO)
+    elif contrato == "nao":
+        where.append("NOT " + _TEM_CONTRATO)
+    base = ("FROM clientes c LEFT JOIN pagamentos_mensais p "
+            "ON p.cliente_id = c.id AND p.mes_referencia = %(mes)s "
+            "WHERE " + " AND ".join(where))
+    return mes, base, params
+
+
+def list_clients(db, *, sort="codigo", direction="asc", page=1, per_page=25, **filtros) -> dict:
+    mes, base, params = _where(db, **filtros)
 
     direction = "DESC" if str(direction).lower() == "desc" else "ASC"
     order = SORTS.get(sort, SORTS["codigo"]).format(d=direction) + ", c.id ASC"
     per_page = max(5, min(int(per_page), 200))
     page = max(1, int(page))
 
-    base = ("FROM clientes c LEFT JOIN pagamentos_mensais p "
-            "ON p.cliente_id = c.id AND p.mes_referencia = %(mes)s "
-            "WHERE " + " AND ".join(where))
     total = db.execute("SELECT COUNT(*) " + base, params).fetchone()[0]
     rows = db.execute(
-        f"SELECT c.*, p.valor_centavos, p.classificacao {base} ORDER BY {order} "
+        f"SELECT c.*, p.valor_centavos, p.classificacao, {_TEM_CONTRATO} AS tem_contrato {base} ORDER BY {order} "
         "LIMIT %(limit)s OFFSET %(offset)s",
         {**params, "limit": per_page, "offset": (page - 1) * per_page}).fetchall()
     return {
@@ -146,7 +189,16 @@ def list_clients(db, *, q="", classificacao="", segmento="", mes=None,
 
 
 def get_client(db, client_id: int) -> dict | None:
-    return db.execute("SELECT * FROM clientes WHERE id = %s", (client_id,)).fetchone()
+    return db.execute(f"SELECT c.*, {_TEM_CONTRATO} AS tem_contrato FROM clientes c WHERE c.id = %s",
+                      (client_id,)).fetchone()
+
+
+def atribuir_vendedor(db, novo_vendedor: str | None, **filtros) -> int:
+    """Gestão da carteira: define o vendedor de todos os clientes que atendem aos filtros. Não faz commit."""
+    _, base, params = _where(db, **filtros)
+    cursor = db.execute(f"UPDATE clientes SET vendedor = %(novo_vendedor)s, atualizado_em = %(agora)s "
+                        f"WHERE id IN (SELECT c.id {base})", {**params, "novo_vendedor": novo_vendedor, "agora": now()})
+    return cursor.rowcount
 
 
 def find_by_codigo(db, codigo: str | None, exclude_id: int | None = None):
