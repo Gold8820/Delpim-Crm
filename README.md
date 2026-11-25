@@ -254,8 +254,16 @@ Menu **Configurações de importação** → seção **Configuração da Curva A
 
 ## Importação automática (clientes e depois contratos)
 
-Botão **Importar planilha**: selecione a planilha de **clientes** e a de **contratos** (`.xlsx`, `.xls` XML do
-Excel 2003 ou `.csv`; também funciona com uma só) e clique em **Importar**. Não há associação manual de colunas.
+Botão **Importar planilha**: abre direto a janela de seleção de arquivos do Windows (seleção múltipla; `.xlsx`,
+`.xls` XML do Excel 2003 ou `.csv`). Selecione a planilha de **clientes** e a de **contratos** juntas (também
+funciona com uma só). Não há tela intermediária nem associação manual de colunas.
+
+- **Identificação automática:** cada arquivo é reconhecido pelos **cabeçalhos** (não pelo nome do arquivo), em
+  `POST /api/importacao/identificar` (primeiras 200 linhas lidas no navegador; nada é gravado). Contratos exigem
+  Nº e Documento Cliente; clientes exigem Documento (ou código) e Razão Social (ou Nome Fantasia). Se um arquivo
+  não puder ser identificado com segurança (formato não aceito, cabeçalhos insuficientes ou ambíguos, duas
+  planilhas do mesmo tipo), aparece só uma mensagem objetiva e **nada é importado**.
+- Os valores dos contratos vão para o mês de referência atual do sistema.
 
 1. **Clientes:** o navegador lê o arquivo (`static/planilhas.js`), envia as linhas em lotes, as colunas são
    reconhecidas automaticamente (inclusive com linhas vazias antes do cabeçalho, acentos, maiúsculas e espaços),

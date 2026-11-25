@@ -66,6 +66,14 @@ def etapa(client, lido, papel):
     return up, previa, feito.json
 
 
+def test_planilhas_reais_identificadas_automaticamente(client):
+    """Os dois arquivos reais, selecionados juntos (em qualquer ordem), são identificados pelos cabeçalhos."""
+    lidos = [ler(CONTRATOS), ler(CLIENTES)]
+    corpo = {"arquivos": [{"nome": l["arquivo"], "linhas": l["abas"][0][:200]} for l in lidos]}
+    res = client.post("/api/importacao/identificar", json=corpo).json["arquivos"]
+    assert {a["nome"]: a["papel"] for a in res} == {CONTRATOS.name: "contratos", CLIENTES.name: "clientes"}
+
+
 def test_planilhas_reais_importadas_em_duas_etapas(client, consulta):
     cli, con = ler(CLIENTES), ler(CONTRATOS)
     up_c, prev_c, feito_c = etapa(client, cli, "clientes")

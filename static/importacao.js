@@ -2,99 +2,107 @@
 /* ==========================================================================
    Importação automática: planilha de CLIENTES e depois planilha de CONTRATOS.
 
-   1. O usuário escolhe os dois arquivos (ou só um) e clica em IMPORTAR.
-   2. Etapa 1 (clientes): lê no navegador, envia em lotes, reconhece as colunas, analisa e grava.
-   3. Etapa 2 (contratos): o mesmo, relacionando cada contrato ao cliente pelo documento (CPF/CNPJ).
-   4. Mostra o resultado de cada etapa e o resumo geral; as inconsistências podem ser baixadas em CSV.
+   1. O botão "Importar planilha" abre direto a janela de arquivos do sistema (seleção múltipla).
+   2. O navegador lê cada arquivo e o servidor identifica, pelos cabeçalhos, qual é a planilha de clientes
+      e qual é a de contratos (/api/importacao/identificar). Se algum arquivo não puder ser identificado com
+      segurança, só uma mensagem objetiva é mostrada e nada é importado.
+   3. Etapa 1 (clientes) e etapa 2 (contratos): envio em lotes, reconhecimento automático das colunas,
+      análise e gravação, cada uma em transação própria. Um erro em uma não impede a outra.
+   4. Resultado de cada etapa, resumo geral e CSV de inconsistências.
 
-   As etapas são independentes: cada uma é gravada em uma transação própria no servidor, e um erro em uma
-   não impede a outra. Não há associação manual de colunas: vale o mapeamento padrão salvo (ou o
-   reconhecimento automático, que é salvo como padrão na primeira importação). Nenhum dado comercial é
+   Sem tela intermediária e sem associação manual de colunas: vale o mapeamento padrão salvo (ou o
+   reconhecimento automático, salvo como padrão na primeira importação). Nenhum dado comercial é
    guardado no navegador (nada de localStorage).
    ========================================================================== */
 (function () {
   const ETAPAS = [
-    { papel: "clientes", titulo: "Planilha de clientes", desc: "Cadastro (Pessoa, Documento, Razão Social, endereço, contatos…)." },
-    { papel: "contratos", titulo: "Planilha de contratos", desc: "Contratos (Nº, Documento Cliente, Valor Atual, Observação…)." },
+    { papel: "clientes", titulo: "Planilha de clientes" },
+    { papel: "contratos", titulo: "Planilha de contratos" },
   ];
-  const auto = { arquivos: { clientes: null, contratos: null }, mes: null, rodando: false, etapas: {}, fim: false };
+  const ACEITOS = [".xlsx", ".xls", ".csv"];
+  const LINHAS_PARA_IDENTIFICAR = 200;
+  const auto = { mes: null, fase: "inicio", problemas: [], etapas: {} };
 
   const post = (url, json) => api(url, { method: "POST", json });
+  const extensao = (nome) => (nome.match(/\.[^.]+$/) || [""])[0].toLowerCase();
 
-  function abrir() {
-    Object.assign(auto, { arquivos: { clientes: null, contratos: null }, rodando: false, etapas: {}, fim: false,
-                          mes: state.meta.mes_atual });
-    desenhar();
-    $("#dlg-auto").showModal();
-  }
-
-  /* ---------------------------------------------------------------- tela de seleção */
-  function cartaoArquivo(e) {
-    const f = auto.arquivos[e.papel];
-    return `<div class="drop-card" data-auto-drop="${e.papel}">
-      <h3>${e.titulo}</h3>
-      ${f ? `<div class="file-chip">📄 ${esc(f.name)}</div>
-             <div class="drop-actions"><button type="button" class="btn btn-sm" data-auto-pick="${e.papel}">Trocar</button>
-             <button type="button" class="btn btn-sm" data-auto-remove="${e.papel}">Remover</button></div>`
-          : `<div class="dropzone"><strong>Arraste o arquivo para cá</strong>
-             <span class="muted">Excel (.xlsx), Excel 2003 XML (.xls) ou CSV</span><br>
-             <button type="button" class="btn btn-primary" data-auto-pick="${e.papel}">Selecionar planilha de ${e.papel.toUpperCase()}</button></div>
-             <p class="help">${esc(e.desc)}</p>`}
-      <input type="file" accept=".xlsx,.xls,.csv" data-auto-file="${e.papel}" hidden>
-    </div>`;
-  }
-
-  function desenhar() {
-    const corpo = $("#auto-body"), pe = $("#auto-foot");
-    if (auto.rodando || auto.fim) { desenharProgresso(); return; }
-    const algum = auto.arquivos.clientes || auto.arquivos.contratos;
-    corpo.innerHTML = `
-      <p style="margin:0 0 14px">Selecione as duas planilhas e clique em <b>Importar</b>. Primeiro os clientes são gravados;
-        depois, os contratos são relacionados a eles pelo documento (CPF/CNPJ). As colunas são reconhecidas automaticamente.</p>
-      <div class="drops">${ETAPAS.map(cartaoArquivo).join("")}</div>
-      <div class="options"><div class="row"><label for="auto-mes">Mês de referência dos valores dos contratos</label>
-        <select id="auto-mes">${monthOptions(auto.mes)}</select>
-        <span class="muted">O valor do mês substitui o anterior do mesmo mês (nunca soma).</span></div></div>
-      <p class="help"><button type="button" class="link" id="auto-avancado">Importação avançada (revisar a associação de colunas)</button></p>`;
-    pe.innerHTML = `<button type="button" class="btn" data-close>Cancelar</button><span class="spacer"></span>
-      <button type="button" class="btn btn-primary" id="auto-importar" ${algum ? "" : "disabled"}>Importar</button>`;
-    pe.querySelector("[data-close]").onclick = () => $("#dlg-auto").close();
-    $("#auto-importar").onclick = importar;
-    $("#auto-mes").value = auto.mes;   // monthOptions não marca a opção escolhida
-    $("#auto-mes").onchange = (ev) => { auto.mes = ev.target.value; };
-    $("#auto-avancado").onclick = () => { $("#dlg-auto").close(); openImport(); };
-    corpo.onclick = (ev) => {
-      const pick = ev.target.closest("[data-auto-pick]"), rm = ev.target.closest("[data-auto-remove]");
-      if (pick) $(`input[data-auto-file="${pick.dataset.autoPick}"]`).click();
-      if (rm) { auto.arquivos[rm.dataset.autoRemove] = null; desenhar(); }
-    };
-    corpo.onchange = (ev) => {
-      const inp = ev.target.closest("[data-auto-file]");
-      if (inp && inp.files[0]) { auto.arquivos[inp.dataset.autoFile] = inp.files[0]; desenhar(); }
-    };
-    $$("[data-auto-drop]", corpo).forEach((z) => {
-      ["dragenter", "dragover"].forEach((t) => z.addEventListener(t, (e) => { e.preventDefault(); z.classList.add("over"); }));
-      ["dragleave", "drop"].forEach((t) => z.addEventListener(t, (e) => { e.preventDefault(); z.classList.remove("over"); }));
-      z.addEventListener("drop", (e) => {
-        if (e.dataTransfer.files[0]) { auto.arquivos[z.dataset.autoDrop] = e.dataTransfer.files[0]; desenhar(); }
+  /* ---------------------------------------------------------------- 1. janela de arquivos */
+  function seletor() {
+    let inp = $("#auto-arquivos");
+    if (!inp) {
+      inp = Object.assign(document.createElement("input"), { type: "file", id: "auto-arquivos", multiple: true,
+        accept: ACEITOS.join(","), hidden: true });
+      inp.addEventListener("change", () => {
+        const arquivos = [...inp.files];
+        inp.value = "";   // permite escolher os mesmos arquivos de novo
+        if (arquivos.length) iniciar(arquivos);
       });
-    });
+      document.body.appendChild(inp);
+    }
+    return inp;
   }
 
-  /* ---------------------------------------------------------------- execução das etapas */
-  async function importar() {
-    auto.rodando = true;
-    for (const e of ETAPAS) auto.etapas[e.papel] = { estado: auto.arquivos[e.papel] ? "aguardando" : "pulada", texto: "" };
+  // Chamado no clique do botão (o navegador só abre a janela de arquivos dentro de um clique).
+  function abrir() {
+    seletor().click();
+  }
+
+  /* ---------------------------------------------------------------- 2. identificação */
+  async function iniciar(arquivos) {
+    Object.assign(auto, { mes: state.meta.mes_atual, fase: "identificando", problemas: [], etapas: {} });
+    desenhar();
+    if (!$("#dlg-auto").open) $("#dlg-auto").showModal();
+
+    const lidos = [];
+    for (const arquivo of arquivos) {
+      if (!ACEITOS.includes(extensao(arquivo.name))) {
+        auto.problemas.push(`“${arquivo.name}”: formato não aceito (use .xlsx, .xls ou .csv).`);
+        continue;
+      }
+      try {
+        lidos.push({ arquivo, lido: await Planilhas.ler(arquivo) });
+      } catch (err) {
+        auto.problemas.push(`“${arquivo.name}”: ${err.message || "não foi possível ler o arquivo."}`);
+      }
+    }
+    let identificados = [];
+    if (lidos.length) {
+      try {
+        const r = await post("/api/importacao/identificar", { arquivos: lidos.map(({ arquivo, lido }) =>
+          ({ nome: arquivo.name, linhas: (lido.abas[0] || []).slice(0, LINHAS_PARA_IDENTIFICAR) })) });
+        identificados = r.arquivos.map((a, i) => ({ ...lidos[i], papel: a.papel, motivo: a.motivo }));
+      } catch (err) {
+        auto.problemas.push(err.message);
+      }
+    }
+    for (const a of identificados.filter((x) => !x.papel)) {
+      auto.problemas.push(`Não foi possível identificar “${a.arquivo.name}”: ${a.motivo}`);
+    }
+    for (const e of ETAPAS) {
+      const mesmos = identificados.filter((x) => x.papel === e.papel);
+      if (mesmos.length > 1) {
+        auto.problemas.push(`Foram selecionadas ${mesmos.length} planilhas de ${e.papel} (${mesmos.map((x) => `“${x.arquivo.name}”`).join(", ")}). Selecione só uma de cada.`);
+      }
+    }
+    if (auto.problemas.length) { auto.fase = "problema"; desenhar(); return; }
+
+    // 3. etapas, uma depois da outra: clientes e depois contratos
+    auto.fase = "importando";
+    for (const e of ETAPAS) {
+      const achado = identificados.find((x) => x.papel === e.papel);
+      auto.etapas[e.papel] = achado ? { estado: "aguardando", texto: "", arquivo: achado.arquivo.name } : { estado: "pulada" };
+    }
     desenhar();
     for (const e of ETAPAS) {
-      if (auto.arquivos[e.papel]) await etapa(e.papel, auto.arquivos[e.papel]);   // uma depois da outra
+      const achado = identificados.find((x) => x.papel === e.papel);
+      if (achado) await etapa(e.papel, achado.arquivo, achado.lido);
     }
-    auto.rodando = false;
-    auto.fim = true;
+    auto.fase = "fim";
     desenhar();
     try { await refreshAll(); } catch { /* a lista atualiza na próxima abertura */ }
   }
 
+  /* ---------------------------------------------------------------- 3. execução de uma etapa */
   function andamento(papel, texto) {
     Object.assign(auto.etapas[papel], { estado: "rodando", texto });
     desenhar();
@@ -105,12 +113,10 @@
     contratos: [[["numero_contrato"], "Nº (número do contrato)"], [["chave_cliente"], "Documento Cliente"]],
   };
 
-  async function etapa(papel, arquivo) {
+  async function etapa(papel, arquivo, lido) {
     const info = auto.etapas[papel];
     info.inconsistencias = [];
     try {
-      andamento(papel, "Lendo a planilha…");
-      const lido = await Planilhas.ler(arquivo);
       andamento(papel, "Enviando os dados…");
       const up = await Planilhas.enviar(post, lido, { papel },
         (feitos, total) => total > 1 && andamento(papel, `Enviando os dados… ${Math.round((100 * feitos) / total)}%`));
@@ -157,18 +163,17 @@
     } catch (err) {
       Object.assign(info, { estado: "erro", texto: err.message || "Erro inesperado." });
     }
-    info.arquivo = arquivo.name;
     desenhar();
   }
 
-  /* ---------------------------------------------------------------- resultados */
+  /* ---------------------------------------------------------------- 4. tela de andamento e resultados */
   const n = (v) => (v || 0).toLocaleString("pt-BR");
   const cartao = (rotulo, valor, cls = "") => `<div class="stat ${cls}"><b>${n(valor)}</b><span>${rotulo}</span></div>`;
   const contar = (lista, tipo) => lista.filter((i) => i.tipo === tipo).length;
 
   function blocoEtapa(e) {
     const info = auto.etapas[e.papel];
-    if (!info || info.estado === "pulada") return `<section class="auto-etapa"><h3>${e.titulo}</h3><p class="muted">Nenhum arquivo selecionado.</p></section>`;
+    if (!info || info.estado === "pulada") return `<section class="auto-etapa"><h3>${e.titulo}</h3><p class="muted">Nenhum arquivo de ${e.papel} foi selecionado.</p></section>`;
     const icone = { aguardando: "⏳", rodando: "<span class=\"spinner\"></span>", ok: "✓", erro: "✗" }[info.estado];
     const cab = `<h3><span class="auto-icone ${info.estado}">${icone}</span> ${e.titulo}${info.arquivo ? ` <span class="muted">· ${esc(info.arquivo)}</span>` : ""}</h3>`;
     if (info.estado === "aguardando") return `<section class="auto-etapa">${cab}<p class="muted">Aguardando…</p></section>`;
@@ -192,7 +197,7 @@
       ${cartao("Relacionados aos clientes", r.contratos_relacionados)}${cartao("Não relacionados", semCliente, "warn")}
       ${cartao("Duplicidades", duplicados, "rej")}${cartao("Erros", outros, "rej")}</div>
       ${info.zerados ? `<p class="muted">${n(info.zerados)} contrato(s) com valor do mês R$ 0,00 conforme a fonte do valor pago (encerrados/em atraso).</p>` : ""}
-      ${r.pagamentos_gravados != null ? `<p class="muted">Valores do mês gravados: ${n(r.pagamentos_gravados)} cliente(s), reclassificados pela Curva ABC.</p>` : ""}</section>`;
+      ${r.pagamentos_gravados != null ? `<p class="muted">Valores de ${esc(monthLabel(auto.mes))} gravados para ${n(r.pagamentos_gravados)} cliente(s), reclassificados pela Curva ABC.</p>` : ""}</section>`;
   }
 
   function todasInconsistencias() {
@@ -217,18 +222,36 @@
       ${ok.some((i) => i.truncado) ? `<p class="muted">A lista de inconsistências mostra até 1.000 itens por planilha.</p>` : ""}</section>`;
   }
 
-  function desenharProgresso() {
-    $("#auto-body").innerHTML = ETAPAS.map(blocoEtapa).join("") + (auto.fim ? resumoGeral() : "");
-    $("#auto-foot").innerHTML = auto.fim
-      ? `<button type="button" class="btn" id="auto-nova">Nova importação</button><span class="spacer"></span>
-         <button type="button" class="btn btn-primary" id="auto-fechar">Concluir</button>`
-      : `<span class="muted">Importando… não feche esta janela.</span>`;
-    if (auto.fim) {
+  function desenhar() {
+    const corpo = $("#auto-body"), pe = $("#auto-foot");
+    if (auto.fase === "identificando") {
+      corpo.innerHTML = `<p><span class="spinner"></span> Lendo e identificando os arquivos…</p>`;
+      pe.innerHTML = `<span class="muted">Aguarde.</span>`;
+      return;
+    }
+    if (auto.fase === "problema") {
+      corpo.innerHTML = `<div class="notice">${auto.problemas.map((p) => `<div>${esc(p)}</div>`).join("")}</div>
+        <p class="muted">Nada foi importado. Selecione uma planilha de clientes e/ou uma de contratos.</p>`;
+      pe.innerHTML = `<button type="button" class="btn" id="auto-fechar">Fechar</button><span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="auto-nova">Selecionar arquivos</button>`;
       $("#auto-fechar").onclick = () => $("#dlg-auto").close();
       $("#auto-nova").onclick = abrir;
-      const csv = $("#auto-csv");
-      if (csv) csv.onclick = baixarCsv;
+      return;
     }
+    corpo.innerHTML = `<p class="muted auto-mes">Valores dos contratos no mês de referência: <b>${esc(monthLabel(auto.mes))}</b>.</p>`
+      + ETAPAS.map(blocoEtapa).join("") + (auto.fase === "fim" ? resumoGeral() : "");
+    if (auto.fase !== "fim") {
+      pe.innerHTML = `<span class="muted">Importando… não feche esta janela.</span>`;
+      return;
+    }
+    pe.innerHTML = `<button type="button" class="link" id="auto-avancado">Importação avançada</button><span class="spacer"></span>
+      <button type="button" class="btn" id="auto-nova">Importar outros arquivos</button>
+      <button type="button" class="btn btn-primary" id="auto-fechar">Concluir</button>`;
+    $("#auto-fechar").onclick = () => $("#dlg-auto").close();
+    $("#auto-nova").onclick = abrir;
+    $("#auto-avancado").onclick = () => { $("#dlg-auto").close(); openImport(); };
+    const csv = $("#auto-csv");
+    if (csv) csv.onclick = baixarCsv;
   }
 
   /* CSV com ';' e BOM (abre direto no Excel em português): arquivo, planilha, linha e motivo. */

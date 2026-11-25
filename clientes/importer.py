@@ -396,6 +396,49 @@ def fuzzy_suggest(header: list[str], tipo: str, key: str, old_name: str, used: s
     return None
 
 
+MARGEM_IDENTIFICACAO = 3   # diferença mínima de colunas reconhecidas quando a planilha serve para os dois tipos
+
+
+def identificar_planilha(header: list[str]) -> dict:
+    """Diz se a planilha é de CLIENTES ou de CONTRATOS, só pelos cabeçalhos.
+
+    - Contratos exigem o número do contrato e o documento do cliente.
+    - Clientes exigem o documento (ou código) e a razão social (ou nome fantasia).
+    - Se servir para os dois, vence o tipo com claramente mais colunas reconhecidas; empate = não identificada.
+    Retorna {"papel": "clientes"|"contratos"|None, "motivo": str|None, "pontos": {...}}.
+    """
+    m_cli, m_con = suggest_mapping(header, "clientes"), suggest_mapping(header, "contratos")
+    n_cli = sum(v is not None for v in m_cli.values())
+    n_con = sum(v is not None for v in m_con.values())
+    ok_cli = (m_cli["cnpj"] is not None or m_cli["codigo"] is not None) and \
+        (m_cli["razao_social"] is not None or m_cli["nome_fantasia"] is not None)
+    ok_con = m_con["numero_contrato"] is not None and m_con["chave_cliente"] is not None
+    pontos = {"clientes": n_cli, "contratos": n_con}
+    if ok_cli and ok_con:
+        if abs(n_cli - n_con) < MARGEM_IDENTIFICACAO:
+            return {"papel": None, "pontos": pontos,
+                    "motivo": "os cabeçalhos servem tanto para clientes quanto para contratos."}
+        return {"papel": "clientes" if n_cli > n_con else "contratos", "motivo": None, "pontos": pontos}
+    if ok_cli or ok_con:
+        papel = "clientes" if ok_cli else "contratos"
+        outro = "contratos" if ok_cli else "clientes"
+        if pontos[outro] >= pontos[papel] + MARGEM_IDENTIFICACAO:
+            # Ex.: planilha com cara de contratos, mas sem o Nº: não é seguro tratá-la como clientes.
+            if outro == "contratos":
+                faltam = [n for k, n in (("numero_contrato", "o número do contrato (Nº)"),
+                                         ("chave_cliente", "o Documento Cliente")) if m_con[k] is None]
+            else:
+                faltam = ([] if (m_cli["cnpj"] is not None or m_cli["codigo"] is not None) else ["o Documento"]) + \
+                         ([] if (m_cli["razao_social"] is not None or m_cli["nome_fantasia"] is not None) else ["a Razão Social"])
+            falta = " e ".join(faltam) or "as colunas obrigatórias"
+            return {"papel": None, "pontos": pontos,
+                    "motivo": f"parece uma planilha de {outro}, mas não tem {falta}."}
+        return {"papel": papel, "motivo": None, "pontos": pontos}
+    return {"papel": None, "pontos": pontos,
+            "motivo": "não foram encontradas as colunas de uma planilha de clientes (Documento e Razão Social) "
+                      "nem de contratos (Nº e Documento Cliente)."}
+
+
 def suggest_chave(header: list[str], mapping: dict) -> str:
     """CNPJ é o padrão; só sugere 'código' se a coluna de relacionamento parecer um código."""
     idx = mapping.get("chave_cliente")

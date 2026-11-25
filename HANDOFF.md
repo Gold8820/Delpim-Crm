@@ -22,6 +22,12 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 10 — botão Importar abre direto a seleção de arquivos + identificação automática — 299 testes
+- **Tela:** `static/importacao.js` reescrito: o botão Importar chama `input[type=file][multiple]` (sem tela intermediária); os arquivos são lidos no navegador e enviados a `POST /api/importacao/identificar` (até 10 arquivos × 200 linhas, não grava nada). Problema (formato, não identificado, dois do mesmo tipo) → só mensagem, nada importado. Depois: etapa clientes → etapa contratos → resumo geral (fluxo da Rodada 9). Mês = `meta.mes_atual`.
+- **Regra:** `importer.identificar_planilha` (contratos: Nº + Documento Cliente; clientes: Documento/código + Razão Social/Fantasia; os dois → margem ≥ 3 colunas reconhecidas; um só, mas com cara clara do outro tipo → não identificada, com a coluna que falta).
+- **Arquivos reais:** clientes.xls → clientes; contratos.xls/.csv → contratos; "Planilha sem título.xlsx" (contratos sem Nº) → não identificada.
+- **Publicado:** só no Worker de validação. Produção intocada.
+
 ### Rodada 9 — importação automática em duas etapas (clientes e contratos) — 296 testes
 - **Tela:** `static/importacao.js` (diálogo `#dlg-auto`): dois arquivos + Importar; etapa 1 clientes, etapa 2 contratos (lotes → prévia → confirmação, cada uma com transação própria); cartões por etapa, resumo geral e CSV de inconsistências gerado no navegador. A importação detalhada antiga continua ("Importação avançada").
 - **Reconhecimento:** aliases para todos os cabeçalhos reais (28/28 clientes, 25/25 contratos). "Referência" deixou de ser mês. Campos sem regra própria em `CLIENT_EXTRA_LABELS`/`CONTRACT_EXTRA_LABELS` → coluna `dados_extras` (JSONB) em clientes e contratos; mesclagem sem apagar por célula vazia; exibidos na ficha.

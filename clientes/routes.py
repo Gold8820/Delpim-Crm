@@ -431,6 +431,36 @@ def upload_batch():
     return jsonify({"token": token, "arquivo": meta.get("arquivo"), **payload})
 
 
+@bp.post("/api/importacao/identificar")
+def identificar():
+    """Identifica cada arquivo selecionado (clientes ou contratos) pelas primeiras linhas, lidas no navegador.
+
+    Corpo: {"arquivos": [{"nome", "linhas": [[nº da linha, [células]], ...]}]} (até 10 arquivos, 200 linhas cada).
+    Resposta: {"arquivos": [{"nome", "papel": "clientes"|"contratos"|null, "motivo"}]}. Não grava nada.
+    """
+    body = request.get_json(silent=True)
+    arquivos = body.get("arquivos") if isinstance(body, dict) else None
+    if not isinstance(arquivos, list) or not 0 < len(arquivos) <= 10:
+        return error("Selecione de 1 a 10 arquivos.")
+    resposta = []
+    for arq in arquivos:
+        nome = str((arq or {}).get("nome") or "")[:200]
+        linhas = (arq or {}).get("linhas")
+        if not isinstance(linhas, list) or len(linhas) > 200 or not all(
+                isinstance(i, list) and len(i) == 2 and isinstance(i[0], int) and isinstance(i[1], list)
+                and all(_celula_valida(c) for c in i[1]) for i in linhas):
+            return error("Conteúdo de arquivo inválido.")
+        try:
+            tabela = importer._build(iter([(n, [importer._json_cell(c) for c in cells]) for n, cells in linhas]),
+                                     sheets=[], sheet=None)
+        except importer.ImportFailure as exc:
+            resposta.append({"nome": nome, "papel": None, "motivo": str(exc)})
+            continue
+        r = importer.identificar_planilha(tabela["header"])
+        resposta.append({"nome": nome, "papel": r["papel"], "motivo": r["motivo"]})
+    return jsonify({"arquivos": resposta})
+
+
 @bp.post("/api/importacao/planilha")
 def reread():
     """Troca de aba ou de configuração: reaplica a associação sobre o mesmo arquivo."""

@@ -336,3 +336,44 @@ def test_mapeamento_antigo_sem_observacoes_passa_a_importar_observacoes(client, 
     assert up["configuracao"]["nome"] == "Contratos — 17/11/2026" and up["colunas_desconhecidas"] == []
     obs, extras = consulta("SELECT observacoes, dados_extras FROM contratos")[0]
     assert obs == "Renovar em março" and extras["quantidade_parcelas"] == "48"
+
+
+# ============================================================================ identificação automática dos arquivos
+
+def _identificar(client, *arquivos):
+    corpo = {"arquivos": [{"nome": nome, "linhas": [[i + 1, list(l)] for i, l in enumerate(linhas)]}
+                          for nome, linhas in arquivos]}
+    res = client.post("/api/importacao/identificar", json=corpo)
+    assert res.status_code == 200, res.json
+    return {a["nome"]: (a["papel"], a["motivo"]) for a in res.json["arquivos"]}
+
+
+def test_identifica_clientes_e_contratos_pelos_cabecalhos_reais(client):
+    r = _identificar(client,
+                     ("contratos.xls", [CAB_CONTRATOS, linha_contrato(1, cnpj(1))]),     # ordem trocada de propósito
+                     ("clientes.xls", [[], [], CAB_CLIENTES, linha_cliente(1, cnpj(1))]))  # linhas vazias antes
+    assert r == {"contratos.xls": ("contratos", None), "clientes.xls": ("clientes", None)}
+
+
+def test_identifica_com_variacoes_de_nome(client):
+    cli = ["CPF/CNPJ", "razao social", "Nome fantasia", "Cidade", "UF"]
+    con = ["numero do contrato", "CNPJ Cliente", "valor mensal", "observacao"]
+    r = _identificar(client, ("a.csv", [cli, [cnpj(1), "A", "B", "C", "SP"]]), ("b.csv", [con, ["1", cnpj(1), "10", ""]]))
+    assert r["a.csv"][0] == "clientes" and r["b.csv"][0] == "contratos"
+
+
+def test_arquivo_sem_identificacao_segura_gera_mensagem(client):
+    sem_numero = [c for c in CAB_CONTRATOS if c != "Nº"]         # contratos sem a coluna do número
+    qualquer = ["Produto", "Quantidade", "Preço"]
+    r = _identificar(client, ("sem_numero.xls", [sem_numero, ["x"] * len(sem_numero)]),
+                     ("outra.csv", [qualquer, ["a", "1", "2"]]), ("vazia.csv", []))
+    assert r["sem_numero.xls"][0] is None and "número do contrato" in r["sem_numero.xls"][1]
+    assert r["outra.csv"][0] is None and "Documento" in r["outra.csv"][1]
+    assert r["vazia.csv"][0] is None and "vazia" in r["vazia.csv"][1]
+
+
+def test_identificar_valida_o_pedido(client):
+    assert client.post("/api/importacao/identificar", json={"arquivos": []}).status_code == 400
+    assert client.post("/api/importacao/identificar", json={"arquivos": [{"nome": "a", "linhas": "x"}]}).status_code == 400
+    muitas = [{"nome": f"{i}.csv", "linhas": []} for i in range(11)]
+    assert client.post("/api/importacao/identificar", json={"arquivos": muitas}).status_code == 400
