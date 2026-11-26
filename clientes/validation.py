@@ -489,6 +489,40 @@ def merge_extras(current: dict | None, incoming: dict) -> dict:
     return {**(current or {}), **incoming}
 
 
+def limpar_extras_editados(edicoes, atuais: dict | None) -> tuple[dict, dict]:
+    """Edição manual dos dados adicionais (ficha do cliente). Aceita só os campos conhecidos da planilha de
+    clientes ou os que já existem no cadastro. Retorna (alterações {chave: texto ou None para esvaziar}, erros)."""
+    atuais = atuais or {}
+    if not isinstance(edicoes, dict):
+        return {}, {}
+    if len(edicoes) > 60:
+        return {}, {"dados_extras": "Dados adicionais inválidos."}
+    mudancas, erros = {}, {}
+    for chave, valor in edicoes.items():
+        if not isinstance(chave, str) or (chave not in CLIENT_EXTRA_LABELS and chave not in atuais):
+            continue
+        if valor is not None and not isinstance(valor, (str, int, float)):
+            erros[f"extra_{chave}"] = "Valor inválido."
+            continue
+        texto = re.sub(r"\s+", " ", str(valor if valor is not None else "")).strip()
+        if len(texto) > EXTRA_MAX_LEN:
+            erros[f"extra_{chave}"] = f"Use até {EXTRA_MAX_LEN} caracteres."
+            continue
+        mudancas[chave] = texto or None
+    return mudancas, erros
+
+
+def aplicar_extras_editados(atuais: dict | None, mudancas: dict) -> dict:
+    """Novo conteúdo de dados_extras: altera só as chaves editadas (vazio = sem valor), mantém as demais."""
+    novo = dict(atuais or {})
+    for chave, valor in mudancas.items():
+        if valor is None:
+            novo.pop(chave, None)
+        else:
+            novo[chave] = valor
+    return novo
+
+
 def flag_sim(value) -> bool:
     """'Sim', 'S', 'Yes', 'True', '1' (com ou sem espaços/acentos) -> True."""
     text = strip_accents(to_text(value) or "").strip().lower()

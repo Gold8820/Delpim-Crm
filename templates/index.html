@@ -193,12 +193,14 @@
             <fieldset class="form-section">
               <legend>Identificação</legend>
               <div class="form-grid">
+                <div class="field"><label for="c-cnpj">CPF / CNPJ</label><input id="c-cnpj" name="cnpj" inputmode="text" maxlength="18" placeholder="00.000.000/0000-00" autocomplete="off"><small class="err"></small></div>
+                <div class="field"><label for="x-pessoa">Pessoa</label><select id="x-pessoa" data-extra="pessoa"><option value="">—</option><option value="Física">Física</option><option value="Jurídica">Jurídica</option></select><small class="err" data-extra-err="pessoa"></small></div>
+                <div class="field"><label for="x-inscricao_estadual">Inscrição Estadual (IE)</label><input id="x-inscricao_estadual" data-extra="inscricao_estadual" maxlength="500" autocomplete="off"><small class="err" data-extra-err="inscricao_estadual"></small></div>
                 <div class="field"><label for="c-codigo">Código do cliente *</label><input id="c-codigo" name="codigo" maxlength="40"><small class="err"></small></div>
-                <div class="field"><label for="c-cnpj">CNPJ / CPF</label><input id="c-cnpj" name="cnpj" inputmode="text" maxlength="18" placeholder="00.000.000/0000-00" autocomplete="off"><small class="err"></small></div>
                 <div class="field"><label for="c-telefone">Telefone</label><input id="c-telefone" name="telefone" inputmode="tel" maxlength="40" placeholder="(00) 00000-0000"><small class="err"></small></div>
-                <div class="field w-full"><label for="c-razao">Razão social</label><input id="c-razao" name="razao_social" maxlength="200"><small class="err"></small></div>
-                <div class="field w2"><label for="c-fantasia">Nome fantasia</label><input id="c-fantasia" name="nome_fantasia" maxlength="200"><small class="err"></small></div>
                 <div class="field"><label for="c-email">E-mail</label><input id="c-email" name="email" type="email" maxlength="200"><small class="err"></small></div>
+                <div class="field w-full"><label for="c-razao">Razão social</label><input id="c-razao" name="razao_social" maxlength="200"><small class="err"></small></div>
+                <div class="field w-full"><label for="c-fantasia">Nome fantasia</label><input id="c-fantasia" name="nome_fantasia" maxlength="200"><small class="err"></small></div>
               </div>
             </fieldset>
 
@@ -249,11 +251,19 @@
           </div>
         </div>
 
-        <section class="form-section form-related" aria-label="Contratos, histórico e dados da planilha">
+        <details class="form-section extras-accordion" id="extras-box">
+          <summary>
+            <span>Dados adicionais da planilha de clientes</span>
+            <span class="extras-resumo muted" id="extras-resumo"></span>
+            <svg class="chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="form-grid extras-campos" id="extras-campos"></div>
+        </details>
+
+        <section class="form-section form-related" aria-label="Contratos e histórico">
           <div class="history" id="contracts-box" hidden></div>
           <div class="related-row">
             <div class="history" id="history" hidden></div>
-            <div class="history" id="extras-box" hidden></div>
           </div>
         </section>
       </div>

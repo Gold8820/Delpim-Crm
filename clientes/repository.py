@@ -247,6 +247,17 @@ def update_client(db, client_id: int, values: dict) -> None:
     db.execute(f"UPDATE clientes SET {assignments} WHERE id = %(id)s", data)
 
 
+def save_client_extras(db, client_id: int, mudancas: dict) -> None:
+    """Grava os dados adicionais editados na ficha (só as chaves alteradas). Não faz commit."""
+    from .validation import aplicar_extras_editados
+    if not mudancas:
+        return
+    row = db.execute("SELECT dados_extras FROM clientes WHERE id = %s", (client_id,)).fetchone()
+    novo = aplicar_extras_editados(_json_obj(row["dados_extras"]) if row else {}, mudancas)
+    db.execute("UPDATE clientes SET dados_extras = %s::jsonb, atualizado_em = %s WHERE id = %s",
+               (json.dumps(novo, ensure_ascii=False), now(), client_id))
+
+
 def load_faixas(db) -> list[dict]:
     """Faixas da Curva ABC salvas no banco, da maior para a menor classificação."""
     rows = db.execute("SELECT classificacao, minimo_centavos, maximo_centavos FROM curvas_abc").fetchall()

@@ -282,8 +282,11 @@ function showFormErrors(err) {
   const fields = err.fields || {};
   const first = Object.keys(fields)[0];
   for (const [name, msg] of Object.entries(fields)) {
-    const input = $(`#form-client [name="${name === "valor_centavos" ? "valor" : name}"]`);
+    const input = name.startsWith("extra_")
+      ? $(`#form-client [data-extra="${name.slice(6)}"]`)
+      : $(`#form-client [name="${name === "valor_centavos" ? "valor" : name}"]`);
     if (!input) continue;
+    if (input.closest("#extras-box")) $("#extras-box").open = true;
     input.classList.add("invalid");
     const small = input.closest(".field").querySelector("small.err");
     if (small) small.textContent = msg;
@@ -324,11 +327,42 @@ function extrasList(extras, labels) {
 
 const fieldLabels = (key) => Object.fromEntries((state.meta[key] || []).map((c) => [c.chave, c.rotulo]));
 
+/* Dados adicionais da planilha de clientes. Pessoa e Inscrição Estadual ficam junto do CPF/CNPJ; os demais,
+   na seção expansível (fechada por padrão). Todos editáveis: só os alterados são enviados ao salvar. */
+const EXTRAS_PRINCIPAIS = ["pessoa", "inscricao_estadual"];
+const EXTRAS_SECAO = ["endereco_padrao", "referencia", "codigo_ibge", "contato_padrao", "contato_cobranca", "contato",
+  "estado_inscricao_estadual", "data_nascimento", "optante_simples", "dias_antecedencia_faturamento",
+  "dia_faturamento", "configuracao_faturamento", "inscricao_municipal"];
+
 function renderExtras() {
-  const box = $("#extras-box");
-  const html = extrasList(clientForm.extras, fieldLabels("campos"));
-  box.hidden = !html;
-  box.innerHTML = html ? `<h3>Dados adicionais da planilha de clientes</h3>${html}` : "";
+  const extras = clientForm.extras || {};
+  const labels = fieldLabels("campos");
+  const outros = Object.keys(extras).filter((k) => !EXTRAS_PRINCIPAIS.includes(k) && !EXTRAS_SECAO.includes(k));
+  const chaves = [...EXTRAS_SECAO, ...outros];
+  $("#extras-campos").innerHTML = chaves.map((k) => `<div class="field${k === "endereco_padrao" || k === "configuracao_faturamento" ? " w2" : ""}">
+      <label for="x-${esc(k)}">${esc(labels[k] || k)}</label>
+      <input id="x-${esc(k)}" data-extra="${esc(k)}" maxlength="500" autocomplete="off">
+      <small class="err" data-extra-err="${esc(k)}"></small></div>`).join("");
+  clientForm.extrasOriginal = {};
+  for (const el of $$("[data-extra]", $("#form-client"))) {
+    const k = el.dataset.extra, v = extras[k] == null ? "" : String(extras[k]);
+    if (el.tagName === "SELECT" && v && ![...el.options].some((o) => o.value === v)) el.insertAdjacentHTML("beforeend", `<option value="${esc(v)}">${esc(v)}</option>`);
+    el.value = v;
+    clientForm.extrasOriginal[k] = v;
+  }
+  const preenchidos = chaves.filter((k) => extras[k] != null && extras[k] !== "").length;
+  $("#extras-resumo").textContent = preenchidos ? `${preenchidos} de ${chaves.length} preenchido(s)` : "nenhum preenchido";
+  $("#extras-box").open = false;
+}
+
+/* Só os dados adicionais alterados pelo usuário (vazio = remover o valor). */
+function extrasEditados() {
+  const out = {};
+  for (const el of $$("[data-extra]", $("#form-client"))) {
+    const k = el.dataset.extra, v = el.value.trim();
+    if (v !== (clientForm.extrasOriginal?.[k] ?? "")) out[k] = v;
+  }
+  return out;
 }
 
 function renderContracts() {
@@ -430,6 +464,7 @@ function wireClientForm() {
     clearFormErrors();
     const payload = Object.fromEntries(new FormData(form).entries());
     if (window.perfilEdicoes) payload.perfil = window.perfilEdicoes();
+    payload.dados_extras = extrasEditados();
     const btn = $("#client-save");
     btn.disabled = true;
     try {

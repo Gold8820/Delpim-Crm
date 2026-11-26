@@ -154,6 +154,19 @@ dialog.modal { border-radius: 12px; max-height: calc(100vh - 32px); width: calc(
 .readonly { min-height: 36px; padding: 7px 10px; background: var(--surface-2); border-style: solid; }
 .dica { min-height: 0; margin-top: 2px; }
 .dica:empty { display: none; }
+/* dados adicionais da planilha: seção expansível, fechada por padrão */
+.extras-accordion { margin-top: 14px; padding: 0; }
+.extras-accordion > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer;
+  font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--primary-dark);
+  border-radius: 10px; user-select: none; margin: 0; }
+.extras-accordion > summary::-webkit-details-marker { display: none; }
+.extras-accordion > summary:hover { background: var(--surface-2); }
+.extras-accordion > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.extras-resumo { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.extras-accordion .chevron { margin-left: auto; transition: transform .15s ease; color: var(--muted); flex: none; }
+.extras-accordion[open] .chevron { transform: rotate(180deg); }
+.extras-accordion[open] > summary { border-bottom: 1px solid var(--border); border-radius: 10px 10px 0 0; }
+.extras-campos { padding: 12px 14px 14px; }
 .form-related { margin-top: 14px; display: grid; gap: 12px; padding: 12px 14px; }
 .form-related:not(:has(.history:not([hidden]))) { display: none; }
 .related-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }

@@ -13,7 +13,8 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from . import configs as cfg, db as dbmod, importer, perfil, repository as repo
 from .classification import LABELS, describe_faixas, validate_faixas
 from .db import get_db
-from .validation import (CLIENT_EXTRA_LABELS, CONTRACT_EXTRA_LABELS, CONTRACT_LABELS, FIELD_LABELS, UFS, normalize, parse_money, to_note_checked)
+from .validation import (CLIENT_EXTRA_LABELS, CONTRACT_EXTRA_LABELS, CONTRACT_LABELS, FIELD_LABELS, UFS,
+                         limpar_extras_editados, normalize, parse_money, to_note_checked)
 
 bp = Blueprint("clientes", __name__)
 
@@ -268,6 +269,10 @@ def _save_client(client_id: int | None, success_status: int = 200):
         return error("Cliente não encontrado.", 404)
     clean, errors = _validate_client_payload(db, payload, client_id)
     edicoes = payload.get("perfil") if isinstance(payload.get("perfil"), dict) else {}
+    atual = repo.get_client(db, client_id) if client_id is not None else None
+    extras_mudancas, extras_erros = limpar_extras_editados(
+        payload.get("dados_extras"), repo._json_obj(atual["dados_extras"]) if atual is not None else {})
+    errors.update(extras_erros)
     for campo, valor in edicoes.items():
         if campo in perfil.CAMPOS:
             erro = perfil.limpar_valor(campo, valor)[1]
@@ -283,6 +288,7 @@ def _save_client(client_id: int | None, success_status: int = 200):
         if clean["valor_centavos"] is not None:
             repo.upsert_payment(db, client_id, clean["mes"], clean["valor_centavos"], "manual")
         # perfil: primeiro o automático (nome/bairro podem ter mudado), depois o que foi editado à mão
+        repo.save_client_extras(db, client_id, extras_mudancas)
         perfil.reclassificar(db, [client_id])
         perfil.salvar_manual(db, client_id, edicoes)
         db.commit()
