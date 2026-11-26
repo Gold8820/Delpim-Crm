@@ -158,7 +158,7 @@ function renderTable(data) {
     return `<tr data-id="${c.id}">
       <td class="code">${esc(c.codigo)}</td>
       <td><div class="client-name">${esc(c.nome)}</div>${sub}</td>
-      <td class="perfil-cell">${esc(c.tipo_cadastro || "—")}<div class="client-sub">${esc([c.regiao1, c.regiao2].filter(Boolean).join(" · ") || "")}${c.situacao_contratual === "Não contratado" ? `<span class="tag-sem">sem contrato</span>` : ""}</div></td>
+      <td class="perfil-cell">${esc(c.tipo_cadastro || "—")}<div class="client-sub">${esc([c.regiao1, c.regiao2].filter(Boolean).join(" · ") || "")}${c.situacao_contratual === "Cliente sem contrato" ? `<span class="tag-sem">sem contrato</span>` : ""}</div></td>
       <td>${esc(c.cnpj || "—")}</td>
       <td class="truncate">${esc(c.cidade || "—")}</td>
       <td>${esc(c.estado || "—")}</td>

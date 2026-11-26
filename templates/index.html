@@ -75,6 +75,7 @@
         </label>
       </section>
       <section class="card toolbar toolbar-perfil" id="perfil-filtros" aria-label="Filtros do perfil comercial"></section>
+      <div class="notice perfil-aviso" id="perfil-aviso" hidden></div>
 
       <div class="legend" id="legend" aria-label="Faixas de classificação"></div>
 
@@ -142,8 +143,8 @@
         <section class="card curva-card" aria-labelledby="regioes-title">
           <header class="curva-head">
             <h2 id="regioes-title">Regiões e classificação automática</h2>
-            <p class="muted">Mapeamento geográfico usado para preencher a <b>Região 1</b> (zona) e a <b>Região 2</b> (bairro/distrito)
-              a partir do bairro e da cidade do cadastro. Sem regra correspondente, a Região 1 fica vazia (nunca é inventada).
+            <p class="muted">Quantos clientes tiveram cada campo identificado e o mapeamento de bairros usado para a <b>Região 1</b> (zona).
+              Sem regra correspondente, a Região 1 fica vazia (nunca é inventada) e o cliente aparece como pendente.
               Ao salvar, a carteira é reclassificada; edições manuais são preservadas.</p>
           </header>
           <div id="regioes-body"></div>
@@ -186,7 +187,7 @@
             <div class="field span-5"><label for="pf-escritorio_contabil">Escritório de contabilidade</label><input id="pf-escritorio_contabil" data-perfil="escritorio_contabil" maxlength="120" list="dl-pf-escritorio"><datalist id="dl-pf-escritorio"></datalist><small class="dica" data-pf-dica="escritorio_contabil"></small><small class="err"></small></div>
             <div class="field span-3"><label for="pf-situacao_contabil">Atendimento contábil</label><select id="pf-situacao_contabil" data-perfil="situacao_contabil"></select><small class="dica" data-pf-dica="situacao_contabil"></small><small class="err"></small></div>
             <div class="field span-2"><label for="pf-regiao1">Região 1</label><input id="pf-regiao1" data-perfil="regiao1" maxlength="120" list="dl-pf-regiao1" placeholder="Zona Leste"><datalist id="dl-pf-regiao1"></datalist><small class="dica" data-pf-dica="regiao1"></small><small class="err"></small></div>
-            <div class="field span-2"><label for="pf-regiao2">Região 2</label><input id="pf-regiao2" data-perfil="regiao2" maxlength="120" list="dl-pf-regiao2" placeholder="Penha"><datalist id="dl-pf-regiao2"></datalist><small class="dica" data-pf-dica="regiao2"></small><small class="err"></small></div>
+            <div class="field span-2"><label for="pf-regiao2">Região 2</label><input id="pf-regiao2" data-perfil="regiao2" maxlength="120" list="dl-pf-regiao2" placeholder="Bairro"><datalist id="dl-pf-regiao2"></datalist><small class="dica" data-pf-dica="regiao2"></small><small class="err"></small></div>
           </div>
         </fieldset>
 

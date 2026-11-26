@@ -22,6 +22,12 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 12 — regras definitivas do perfil + diagnóstico — 374 testes
+- **Causa dos campos vazios:** a importação de 25/11 00:45 UTC rodou na versão anterior do Worker de validação (publicada 00:39); a versão com o perfil só foi publicada às 01:39. Depois disso não houve importação nem reclassificação, então as 1.279 linhas ficaram com `perfil_auto = '{}'`. Agora: aviso na tela + botão "Classificar agora" quando houver clientes nunca classificados; teste de regressão (reimportação idêntica preenche clientes antigos).
+- **Regras:** sem Lead; tipo = Ex-cliente / Fornecedor / Revenda / Contabilidade / Cliente (padrão); situação contratual "Contratado" / "Cliente sem contrato"; Região 2 = Bairro do cadastro; mapa de regiões com 3 colunas (Cidade; Bairro; Região 1; a 4ª coluna antiga é ignorada).
+- **Diagnóstico:** `perfil.diagnostico()` (também em `reclassificar()`), `GET /api/perfil/diagnostico`, `GET /api/perfil/pendentes.csv`, filtro `pendente=algum|tipo_cadastro|segmento_nome|contabilidade|regiao1|regiao2`, `meta.perfil.nunca_classificados`.
+- **Publicado:** só no Worker de validação. Produção intocada. Banco: nenhuma coluna nova nesta rodada.
+
 ### Rodada 11 — perfil comercial (tipo, contabilidade, segmento, regiões, vendedor) e filtros — 365 testes
 - **Regras:** `clientes/perfil.py` (`identificar`, `reclassificar`, `mesclar`, `salvar_manual`, mapa de regiões). Testes com os exemplos reais em `tests/test_perfil.py` e de ponta a ponta em `tests/test_perfil_integracao.py`; `test_planilhas_reais.py` confere exemplos reais.
 - **Banco (produção, 24/11/2026, só adição, sem alterar dados):** `clientes.tipo_cadastro, escritorio_contabil, situacao_contabil, segmento_nome, regiao1, regiao2, perfil_auto (jsonb), perfil_manual (jsonb)`. Mapa de regiões em `configuracoes_sistema` (chave `mapa_regioes`; sem registro = padrão do código). Situação contratual = EXISTS em contratos.

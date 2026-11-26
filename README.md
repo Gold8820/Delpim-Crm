@@ -254,30 +254,28 @@ Menu **Configurações de importação** → seção **Configuração da Curva A
 
 ## Perfil comercial (classificação automática e filtros)
 
-Campos do cadastro preenchidos automaticamente a cada importação (e ao salvar um cliente), a partir dos padrões de
-nome `RAZÃO SOCIAL * NOME FANTASIA * CONTABILIDADE` (`clientes/perfil.py`). O nome original nunca é alterado.
+Campos preenchidos e **gravados no banco** a cada importação (inclusive reimportação sem alterações), ao salvar um
+cliente, ao salvar o mapa de regiões ou pelo botão "Classificar agora" (`clientes/perfil.py`). O nome original não muda.
 
-- **Tipo de cadastro:** `(INATIVO)` no início → Ex-cliente; nome começando com REVENDA → Revenda (REVENDA entre
-  parênteses, como "(REVENDA JORGE JAPONES)", não conta); FORNECEDOR → Fornecedor; nome fantasia formado só por
-  escritório contábil → Contabilidade; `(SEM CONTRATO)` → Cliente sem contrato; com contrato relacionado → Cliente.
-  Sem contrato e sem marcação: fica sem classificação (nunca vira Lead sozinho; Lead só com `(LEAD)`).
-- **Escritório de contabilidade:** a parte com CONTABILIDADE/CONTADOR (inclusive erros de digitação comuns), sem
-  telefone. "CONTABILIDADE NÃO UTILIZA" / "SOLICITAR CONTATO" vão para **Atendimento contábil**, não para o nome.
-- **Segmento:** duas primeiras palavras significativas do nome fantasia (ADEGA PRONTO SOCORRO → ADEGA PRONTO),
-  ignorando prefixos e parênteses. O antigo campo "Segmento" (coluna Ramo Atividade) passa a se chamar **Ramo de atividade**.
-- **Situação contratual:** Contratado / Não contratado, sempre calculada pelos contratos relacionados (não é gravada).
-- **Região 1 / Região 2:** zona e bairro/distrito pelo mapeamento configurável (Configurações > Regiões; inicial: os
-  96 distritos de São Paulo). "(Zona Leste)" escrito no bairro vale mais que o mapeamento. Sem regra: Região 1 vazia.
-- **Vendedor responsável:** importado quando a planilha tem a coluna (Vendedor, Representante, Consultor...); senão é
-  preservado. Atribuição manual na ficha ou em lote ("Atribuir vendedor…" aplica aos clientes da lista filtrada).
-- **Edição manual:** o campo corrigido na ficha fica marcado como manual e não é sobrescrito pelas importações, a não
-  ser que a informação da planilha que gerou o valor mude (ex.: o nome passou a ter `(INATIVO)`).
-- **Dúvidas** (contabilidade fora do padrão, ramo Contabilidade com nome de outro negócio, (SEM CONTRATO) com contrato,
-  bairro de duas regiões): o campo fica vazio e o caso vai para o CSV de inconsistências como "Classificação a revisar".
-- **Filtros combináveis** na tela principal: tipo, situação contratual, escritório, segmento, regiões, vendedor (mais
-  classificação ABC, ramo e pesquisa). Ex.: Revenda + Zona Leste; A+ + Região 2 Penha; Ex-cliente + CONTABILIDADE BATISTA.
-- Planilhas reais (banco de teste): 481 Clientes, 434 Ex-clientes, 142 Contabilidades, 85 sem contrato, 14 Fornecedores,
-  5 Revendas, 113 sem classificação, 6 dúvidas.
+- **Tipo de cliente:** Razão Social ou Nome Fantasia começando com `(INATIVO)` → Ex-cliente; REVENDA ou FORNECEDOR
+  explícitos no início do nome → Revenda / Fornecedor ("(REVENDA JORGE JAPONES)" entre parênteses não conta); nome
+  fantasia formado só por escritório contábil → Contabilidade; caso contrário → Cliente. Não existe a categoria Lead.
+- **Situação contratual:** Contratado (há contrato relacionado pelo CPF/CNPJ) ou Cliente sem contrato. Calculada
+  sempre pelos contratos.
+- **Contabilidade:** o texto associado a CONTABILIDADE/CONTADOR antes ou depois de um asterisco (inclusive erros de
+  digitação comuns), sem telefone. "CONTABILIDADE NÃO UTILIZA" / "SOLICITAR CONTATO" vão para **Atendimento contábil**.
+- **Segmento:** duas primeiras palavras significativas do trecho do Nome Fantasia antes do asterisco; com o Nome
+  Fantasia vazio, o trecho da Razão Social depois do primeiro asterisco. Ignora (INATIVO), (CPF) e parênteses.
+  O antigo "Segmento" (coluna Ramo Atividade) chama-se **Ramo de atividade**.
+- **Região 1:** zona pelo mapeamento de bairros configurável (Configurações; inicial: distritos de São Paulo).
+  "(Zona Leste)" escrito no bairro vale mais. Sem regra → pendente (nunca inventada). **Região 2:** o campo Bairro.
+- **Vendedor:** editável na ficha e em lote; preservado nas importações sem coluna de vendedor.
+- **Edição manual** preservada; só é substituída se a informação da planilha que gerou o valor mudar.
+- **Diagnóstico** (Configurações e fim da importação): identificados e pendentes por campo, situação contratual,
+  tipos, bairros mais frequentes sem regra e CSV dos pendentes (`/api/perfil/pendentes.csv`). Filtro
+  "Pendentes de identificação" na tela principal. Aviso na tela quando há clientes ainda não classificados.
+- Planilhas reais (banco de teste, 1.274 clientes): tipo 1.274/0 pendentes; segmento 1.196/78; contabilidade
+  1.047/227; Região 1 509/765 (bairros sem regra); Região 2 1.248/26 (sem bairro); 484 contratados, 790 sem contrato.
 
 ## Importação automática (clientes e depois contratos)
 

@@ -117,7 +117,11 @@ def test_planilhas_reais_importadas_em_duas_etapas(client, consulta):
     assert ex("MERCADO MINI PRECO")[2:] == ("Solicitar contato", "MERCADO MINI")
     assert ex("(INATIVO) HORTIFRUTI ALEXANDRINO LUCIANA")[:2] == ("Ex-cliente", "CONTABILIDADE BATISTA")
     assert perfil["por_tipo"].get("Revenda", 0) >= 4 and len(perfil["duvidas"]) < 30
-    assert "Lead" not in perfil["por_tipo"]          # sem contrato não vira Lead
+    assert "Lead" not in perfil["por_tipo"]
+    d = perfil["diagnostico"]
+    print("DIAGNÓSTICO:", {c["rotulo"]: (c["identificados"], c["pendentes"]) for c in d["campos"]},
+          d["situacao_contratual"], d["contabilidade"])
+    assert d["nunca_classificados"] == 0 and d["situacao_contratual"]["Contratado"] > 400
 
     # reimportação idêntica: nada novo, nada duplicado
     antes = [consulta(f"SELECT COUNT(*) FROM {t}")[0][0] for t in ("clientes", "contratos", "contrato_valores")]

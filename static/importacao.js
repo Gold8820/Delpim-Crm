@@ -214,10 +214,9 @@
   function resumoPerfil() {
     const p = auto.perfil;
     if (!p) return "";
-    const tipos = Object.entries(p.por_tipo || {}).sort((a, b) => b[1] - a[1])
-      .map(([t, q]) => `<span class="pill">${esc(t)}: <b>${n(q)}</b></span>`).join(" ");
-    return `<p class="muted">Perfil comercial da carteira (tipo, contabilidade, segmento e regiões) atualizado.
-      ${p.duvidas?.length ? `${n(p.duvidas.length)} identificação(ões) duvidosa(s) no relatório.` : ""}</p><div class="pills">${tipos}</div>`;
+    return `<h4 class="diag-titulo">Diagnóstico da identificação (tipo, contabilidade, segmento e regiões)</h4>
+      ${p.duvidas?.length ? `<p class="muted">${n(p.duvidas.length)} identificação(ões) duvidosa(s) ficaram pendentes e estão no CSV de inconsistências.</p>` : ""}
+      ${window.perfilDiagnosticoHtml ? window.perfilDiagnosticoHtml(p.diagnostico) : ""}`;
   }
 
   function resumoGeral() {

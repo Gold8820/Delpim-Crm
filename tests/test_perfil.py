@@ -27,7 +27,7 @@ def test_inativo_vira_ex_cliente_mesmo_com_contrato(razao, fantasia):
                                    "REVENDA JOSIVALDO DOS SANTOS * CONTABILIDADE NAO UTILIZA", "REVENDA LUCAS PIRES SANTOS"])
 def test_revendas_explicitas(razao):
     valores, duvidas = ident(razao)
-    assert valores["tipo_cadastro"] == "Revenda" and valores["segmento_nome"] is None and not duvidas
+    assert valores["tipo_cadastro"] == "Revenda" and not duvidas
 
 
 def test_revenda_entre_parenteses_nao_e_revenda():
@@ -57,7 +57,7 @@ def test_escritorio_contabil_como_categoria(razao, fantasia):
 def test_contabilidade_no_inicio_mas_com_outro_negocio_nao_e_contabilidade():
     v, _ = ident("CONTABILIDADE ORGPENHA * MERCADO SILVA - ANT. MERCADO MARLI",
                  "CONTABILIDADE ORGPENHA * MERCADO SILVA - ANT. MERCADO MARLI")
-    assert v["tipo_cadastro"] is None and v["escritorio_contabil"] == "CONTABILIDADE ORGPENHA"
+    assert v["tipo_cadastro"] == "Cliente" and v["escritorio_contabil"] == "CONTABILIDADE ORGPENHA"
     assert v["segmento_nome"] == "MERCADO SILVA"
 
 
@@ -66,21 +66,21 @@ def test_fornecedor():
     assert campo("TROCAFONE S.A.", "(EXCLUIR) FORNECEDOR TROCAFONE S.A.") == "Fornecedor"
 
 
-def test_sem_contrato_nao_vira_lead():
-    assert campo("DIOGO DA SILVA ALMEIDA COSTA", tem_contrato=False) is None
-    assert campo("(SEM CONTRATO) 4U WINE LTDA * ADEGA VINHOS 4U WINE", "(SEM CONTRATO) ADEGA VINHOS 4U WINE") \
-        == "Cliente sem contrato"
-    assert campo("(ML SEM CONTRATO) MERCADO X LTDA * MERCADO X") == "Cliente sem contrato"
-    assert campo("(LEAD) MERCADO NOVO * MERCADO NOVO") == "Lead"
+@pytest.mark.parametrize("razao,fantasia,contrato", [
+    ("DIOGO DA SILVA ALMEIDA COSTA", None, False),                 # sem contrato e sem marcação: Cliente
+    ("(SEM CONTRATO) 4U WINE LTDA * ADEGA VINHOS 4U WINE", "(SEM CONTRATO) ADEGA VINHOS 4U WINE", False),
+    ("(SEM CONTRATO) MERCADO X LTDA * MERCADO X", None, True),     # o contrato é outro campo (situação contratual)
+    ("MCI CONSULTORIA LTDA * DISTRIBUIDORA MCI TELECOM", "DISTRIBUIDORA MCI TELECOM * CONTABILIDADE ALVORADA", True),
+    ("(LEAD) MERCADO NOVO * MERCADO NOVO", None, False),             # não existe mais a categoria Lead
+])
+def test_sem_marcacao_e_cliente(razao, fantasia, contrato):
+    v, d = ident(razao, fantasia, tem_contrato=contrato, ramo="CONTABILIDADE")
+    assert v["tipo_cadastro"] == "Cliente" and not [c for c, _ in d if c == "tipo_cadastro"]
 
 
-def test_duvidas_ficam_sem_classificacao():
-    v, d = ident("(SEM CONTRATO) MERCADO X LTDA * MERCADO X", tem_contrato=True)
-    assert v["tipo_cadastro"] is None and d[0][0] == "tipo_cadastro"
-    v, d = ident("MCI CONSULTORIA LTDA * DISTRIBUIDORA MCI TELECOM",
-                 "DISTRIBUIDORA MCI TELECOM * CONTABILIDADE ALVORADA", ramo="CONTABILIDADE", tem_contrato=True)
-    assert v["tipo_cadastro"] is None and v["escritorio_contabil"] == "CONTABILIDADE ALVORADA"
-    assert [c for c, _ in d] == ["tipo_cadastro"]
+def test_lead_nao_existe():
+    assert "Lead" not in perfil.TIPOS and perfil.limpar_valor("tipo_cadastro", "Lead")[1]
+    assert perfil.SITUACOES_CONTRATUAIS == ("Contratado", "Cliente sem contrato")
 
 
 # --------------------------------------------------------------------------- contabilidade
@@ -137,6 +137,8 @@ def test_contabilidade_fora_do_padrao_vai_para_inconsistencias():
     ("ROUPA PHORTION MATRIZ * CONTABILIDADE AAS.ASSESSORIA CONTABIL", None, "ROUPA PHORTION"),
     ("MERCADO MINI PRECO (NORDESTE LJ2) * CONTABILIDADE SOLICITAR CONTATO", None, "MERCADO MINI"),
     ("(INATIVO) HENRIQUE SILVA CANTUARIA EIRELI * ACOUGUE FAGUNDES", None, "ACOUGUE FAGUNDES"),   # após o 1º asterisco
+    ("(CPF )BICICLETARIA CICLO BIKE 2* CONTABILIDADE NOGUEIRA", None, "BICICLETARIA CICLO"),    # sem o prefixo (CPF)
+    ("REVENDA ALESSANDRO * REVENDA CONTABILIDADE NAO UTILIZA", None, "REVENDA ALESSANDRO"),
     ("CENTRAL DE CARNES LESTEGOL EIRELI - ME *ACOUGUE  LESTE GOL", "ACOUGUE  LESTE GOL", "ACOUGUE LESTE"),
     ("X * ADEGA E TABACARIA RV", "ADEGA E TABACARIA RV * CONTABILIDADE OPENPRIMO", "ADEGA TABACARIA"),
     ("X * MERCADO VILA NOVA", "(REVENDA DIOGO) MERCADO DO BAIRRO LOJA 1(REVENDA DIOGO) *SOLICITAR CONTATO", "MERCADO BAIRRO"),
@@ -151,16 +153,16 @@ def test_sem_nome_fantasia_nao_inventa_segmento():
 
 # --------------------------------------------------------------------------- regiões
 
-@pytest.mark.parametrize("bairro,cidade,r1,r2", [
+@pytest.mark.parametrize("bairro,cidade,r1,r2", [   # Região 2 = o campo Bairro, como está
     ("Penha", "São Paulo", "Zona Leste", "Penha"),
-    ("Parque da Mooca", "São Paulo", "Zona Leste", "Mooca"),
+    ("Parque da Mooca", "São Paulo", "Zona Leste", "Parque da Mooca"),
     ("Tatuapé", "SAO PAULO", "Zona Leste", "Tatuapé"),
-    ("Jardim Vila Carrão", "São Paulo", "Zona Leste", "Carrão"),
-    ("Parque Artur Alvim", "São Paulo", "Zona Leste", "Artur Alvim"),
+    ("Jardim Vila Carrão", "São Paulo", "Zona Leste", "Jardim Vila Carrão"),
+    ("Parque Artur Alvim", "São Paulo", "Zona Leste", "Parque Artur Alvim"),
     ("Vila Mariana", "São Paulo", "Zona Sul", "Vila Mariana"),
-    ("Vila Maria Alta", "São Paulo", "Zona Norte", "Vila Maria"),
-    ("Jardim da Conquista (Zona Leste)", "São Paulo", "Zona Leste", "Jardim da Conquista"),
-    ("Jardim Angela (Zona Leste)", "São Paulo", "Zona Leste", "Jardim Angela"),   # o escrito no bairro vence
+    ("Vila Maria Alta", "São Paulo", "Zona Norte", "Vila Maria Alta"),
+    ("Jardim da Conquista (Zona Leste)", "São Paulo", "Zona Leste", "Jardim da Conquista (Zona Leste)"),
+    ("Jardim Angela (Zona Leste)", "São Paulo", "Zona Leste", "Jardim Angela (Zona Leste)"),   # o escrito vence
     ("Vila Nhocune", "São Paulo", None, "Vila Nhocune"),                          # não mapeado: sem Região 1
     ("Cidade Jardim Cumbica", "Guarulhos", None, "Cidade Jardim Cumbica"),       # outra cidade: não inventa
     (None, "São Paulo", None, None),
@@ -171,11 +173,11 @@ def test_regioes(bairro, cidade, r1, r2):
 
 
 def test_mapeamento_configuravel():
-    mapa, erros = perfil.mapa_de_texto("Guarulhos; ; Grande SP Norte\nSão Paulo; Vila Nhocune; Zona Leste; Penha\n"
+    mapa, erros = perfil.mapa_de_texto("Guarulhos; ; Grande SP Norte\nSão Paulo; Vila Nhocune; Zona Leste\n"
                                        "# comentário\nsem região")
     assert erros == ["Linha 4: informe ao menos a cidade e a Região 1."]
     comp = perfil._compilar_mapa(mapa)
-    assert perfil.identificar_regiao("Vila Nhocune", "São Paulo", comp)[:2] == ("Zona Leste", "Penha")
+    assert perfil.identificar_regiao("Vila Nhocune", "São Paulo", comp)[:2] == ("Zona Leste", "Vila Nhocune")
     assert perfil.identificar_regiao("Cumbica", "Guarulhos", comp)[:2] == ("Grande SP Norte", "Cumbica")
     texto = perfil.mapa_para_texto(perfil.MAPA_PADRAO)
     assert perfil.mapa_de_texto(texto) == (perfil.MAPA_PADRAO, [])

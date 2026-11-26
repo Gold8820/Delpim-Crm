@@ -1,12 +1,13 @@
 """Perfil comercial do cliente: classificação automática a partir dos padrões de nome do cadastro.
 
 Campos (colunas da tabela clientes):
-  tipo_cadastro        Cliente, Cliente sem contrato, Ex-cliente, Lead, Revenda, Contabilidade, Fornecedor
+  tipo_cadastro        Ex-cliente ((INATIVO)), Revenda, Fornecedor, Contabilidade (explícitos no nome) ou Cliente
   escritorio_contabil  escritório de contabilidade VINCULADO ao cliente (não é a categoria do cliente)
   situacao_contabil    "Não utiliza" / "Solicitar contato" (CONTABILIDADE NAO UTILIZA, SOLICITAR CONTATO)
   segmento_nome        duas primeiras palavras significativas do nome fantasia (ADEGA PRONTO SOCORRO → ADEGA PRONTO)
-  regiao1, regiao2     zona (Zona Leste...) e bairro/distrito, pelo mapeamento geográfico configurável
-A situação contratual (Contratado / Não contratado) não é guardada: vem sempre do relacionamento com os contratos.
+  regiao1              zona (Zona Leste...), pelo mapeamento de bairros configurável
+  regiao2              o campo Bairro do cadastro, como está
+A situação contratual (Contratado / Cliente sem contrato) não é guardada: vem sempre dos contratos relacionados.
 O vendedor responsável é o campo `vendedor` do cadastro (importado quando a planilha traz a coluna).
 
 Padrão dos nomes nas planilhas reais: "RAZÃO SOCIAL * NOME FANTASIA * CONTABILIDADE", com prefixos entre
@@ -23,7 +24,8 @@ import json
 import re
 import unicodedata
 
-TIPOS = ("Cliente", "Cliente sem contrato", "Ex-cliente", "Lead", "Revenda", "Contabilidade", "Fornecedor")
+TIPOS = ("Cliente", "Ex-cliente", "Revenda", "Fornecedor", "Contabilidade")
+SITUACOES_CONTRATUAIS = ("Contratado", "Cliente sem contrato")
 SITUACOES_CONTABEIS = ("Não utiliza", "Solicitar contato")
 CAMPOS = ("tipo_cadastro", "escritorio_contabil", "situacao_contabil", "segmento_nome", "regiao1", "regiao2")
 ROTULOS = {
@@ -35,7 +37,7 @@ ROTULOS = {
     "regiao2": "Região 2",
 }
 MAX_LEN = 120
-# "Cliente" é deduzido só da existência de contrato: não substitui uma classificação manual.
+# "Cliente" é o valor padrão (nenhuma marcação no nome): não substitui uma classificação manual.
 _TIPOS_FRACOS = {"Cliente"}
 
 
@@ -159,32 +161,29 @@ _BAIRROS_SP = {
                   "Parque Savoy City, Jardim Adutora, Guaianazes",
     "Zona Norte": "Parada Inglesa, Itaberaba, Vila Penteado",
 }
-MAPA_PADRAO = [{"cidade": "São Paulo", "bairro": d.strip(), "regiao1": zona, "regiao2": d.strip()}
-               for zona, lista in _DISTRITOS_SP.items() for d in lista.split(",")] + [
-              {"cidade": "São Paulo", "bairro": b.strip(), "regiao1": zona, "regiao2": ""}
-              for zona, lista in _BAIRROS_SP.items() for b in lista.split(",")]
+MAPA_PADRAO = [{"cidade": "São Paulo", "bairro": b.strip(), "regiao1": zona}
+               for fonte in (_DISTRITOS_SP, _BAIRROS_SP) for zona, lista in fonte.items() for b in lista.split(",")]
 
 
 def mapa_para_texto(mapa: list[dict]) -> str:
-    return "\n".join(f"{m['cidade']}; {m.get('bairro') or ''}; {m['regiao1']}; {m.get('regiao2') or ''}".rstrip("; ")
-                     for m in mapa)
+    return "\n".join(f"{m['cidade']}; {m.get('bairro') or ''}; {m['regiao1']}" for m in mapa)
 
 
 def mapa_de_texto(texto: str) -> tuple[list[dict], list[str]]:
-    """Linhas "Cidade; Bairro; Região 1; Região 2" (bairro vazio = a cidade toda). Retorna (mapa, erros)."""
+    """Linhas "Cidade; Bairro; Região 1" (bairro vazio = a cidade toda). Retorna (mapa, erros)."""
     mapa, erros = [], []
     for n, linha in enumerate(str(texto or "").splitlines(), 1):
         if not linha.strip() or linha.lstrip().startswith("#"):
             continue
-        partes = [p.strip() for p in linha.split(";")] + ["", "", "", ""]
-        cidade, bairro, r1, r2 = partes[:4]
+        partes = [p.strip() for p in linha.split(";")] + ["", "", ""]
+        cidade, bairro, r1 = partes[:3]
         if not cidade or not r1:
             erros.append(f"Linha {n}: informe ao menos a cidade e a Região 1.")
             continue
-        if any(len(p) > MAX_LEN for p in (cidade, bairro, r1, r2)):
+        if any(len(p) > MAX_LEN for p in (cidade, bairro, r1)):
             erros.append(f"Linha {n}: texto muito longo.")
             continue
-        mapa.append({"cidade": cidade, "bairro": bairro, "regiao1": r1, "regiao2": r2})
+        mapa.append({"cidade": cidade, "bairro": bairro, "regiao1": r1})
     if len(mapa) > 5000:
         erros.append("O mapeamento aceita até 5.000 linhas.")
     return mapa, erros
@@ -195,9 +194,9 @@ def _compilar_mapa(mapa: list[dict]) -> dict:
     for m in mapa:
         c = por_cidade.setdefault(norm(m["cidade"]), {"cidade": None, "bairros": []})
         if m.get("bairro"):
-            c["bairros"].append((norm(m["bairro"]), m["regiao1"], m.get("regiao2") or m["bairro"]))
+            c["bairros"].append((norm(m["bairro"]), m["regiao1"]))
         else:
-            c["cidade"] = (m["regiao1"], m.get("regiao2") or None)
+            c["cidade"] = m["regiao1"]
     return por_cidade
 
 
@@ -213,35 +212,29 @@ def _contem(frase: str, trecho: str) -> bool:
 
 
 def identificar_regiao(bairro, cidade, mapa_compilado: dict) -> tuple[str | None, str | None, str | None]:
-    """(região 1, região 2, dúvida). Sem informação suficiente, a região fica vazia (nunca é inventada)."""
-    b_orig = re.sub(r"\s+", " ", str(bairro or "")).strip()
-    b = norm(b_orig)
+    """(região 1, região 2, dúvida). Região 2 = o bairro do cadastro, como está. A Região 1 vem do mapeamento
+    (ou de "(Zona Leste)" escrito no bairro); sem regra correspondente fica vazia (nunca é inventada)."""
+    regiao2 = re.sub(r"\s+", " ", str(bairro or "")).strip()[:MAX_LEN] or None
+    b = norm(regiao2)
     zona_explicita = None
-    if (m := re.search(r"\(?\bZONA (LESTE|NORTE|SUL|OESTE)\b\)?", b)):
+    if (m := re.search(r"\bZONA (LESTE|NORTE|SUL|OESTE)\b", b)):
         zona_explicita = _ZONAS[m.group(1)]
-        b = re.sub(r"\s+", " ", b.replace(m.group(0), " ")).strip()
-        b_orig = re.sub(r"\s*\(?\b[Zz][Oo][Nn][Aa] \w+\)?", "", b_orig).strip()
+        b = re.sub(r"\s+", " ", re.sub(r"\(?\bZONA \w+\b\)?", " ", b)).strip()
+    if zona_explicita:                 # o que está escrito no bairro vale mais que o mapeamento
+        return zona_explicita, regiao2, None
     regras = mapa_compilado.get(norm(cidade))
-    r1 = r2 = None
-    if regras and b:
+    if not regras:
+        return None, regiao2, None
+    if b:
         achados = [x for x in regras["bairros"] if _contem(b, x[0])]
         if achados:
             maior = max(achados, key=lambda x: len(x[0]))
             conflito = [x for x in achados if x is not maior and x[0] not in maior[0] and x[1] != maior[1]]
             if conflito:
-                return None, b_orig or None, (f"bairro “{b_orig}” corresponde a mais de uma região "
-                                              f"({maior[1]} e {conflito[0][1]}).")
-            r1, r2 = maior[1], maior[2]
-    if r1 is None and regras and regras["cidade"]:
-        r1 = regras["cidade"][0]
-        r2 = regras["cidade"][1] or None
-    if zona_explicita:   # "(Zona Leste)" escrito no bairro vale mais que o mapeamento
-        if r1 != zona_explicita:
-            r2 = None
-        r1 = zona_explicita
-    if r2 is None and b_orig:
-        r2 = b_orig[:MAX_LEN]
-    return r1, r2, None
+                return None, regiao2, (f"bairro “{regiao2}” corresponde a mais de uma região "
+                                       f"({maior[1]} e {conflito[0][1]}).")
+            return maior[1], regiao2, None
+    return regras["cidade"], regiao2, None
 
 
 # --------------------------------------------------------------------------- identificação
@@ -256,16 +249,14 @@ def identificar(razao, fantasia, *, bairro=None, cidade=None, ramo=None, tem_con
     fonte = fan if fan["partes"] else raz
 
     inativo = any(re.match(r"INATIV[OA]\b", t) for t in tags)
-    sem_contrato = any("SEM CONTRATO" in t for t in tags)
-    lead = any(t == "LEAD" for t in tags) or _comeca(fonte["partes"], "LEAD") or _comeca(raz["partes"], "LEAD")
     fornecedor = _comeca(fan["partes"], "FORNECEDOR") or _comeca(raz["partes"], "FORNECEDOR")
     revenda = _comeca(fonte["partes"], "REVENDA") or _comeca(raz["partes"], "REVENDA") or (
         len(raz["partes"]) > 1 and raz["partes"][1]["tipo"] is None and _comeca(raz["partes"][1:], "REVENDA"))
     # a própria empresa é um escritório contábil: todas as partes do nome fantasia são de contabilidade
     contabilidade = bool(fonte["partes"]) and all(p["tipo"] == "escritorio" for p in fonte["partes"])
 
-    # --- tipo de cadastro
-    ramo_contab = norm(ramo).startswith("CONTAB")
+    # --- tipo de cadastro: (INATIVO) → Ex-cliente; REVENDA/FORNECEDOR/escritório contábil explícitos; senão Cliente.
+    #     (a situação contratual é outro campo: vem dos contratos relacionados, não do nome)
     if inativo:
         tipo = "Ex-cliente"
     elif fornecedor:
@@ -274,18 +265,8 @@ def identificar(razao, fantasia, *, bairro=None, cidade=None, ramo=None, tem_con
         tipo = "Revenda"
     elif contabilidade:
         tipo = "Contabilidade"
-    elif lead:
-        tipo = "Lead"
-    elif ramo_contab:
-        tipo = None
-        duvidas.append(("tipo_cadastro", "o ramo de atividade é Contabilidade, mas o nome não segue o padrão de "
-                                         "escritório contábil."))
-    elif sem_contrato:
-        tipo = None if tem_contrato else "Cliente sem contrato"
-        if tem_contrato:
-            duvidas.append(("tipo_cadastro", "o nome indica (SEM CONTRATO), mas há contrato relacionado."))
     else:
-        tipo = "Cliente" if tem_contrato else None
+        tipo = "Cliente"
 
     # --- escritório e situação do atendimento contábil (não para o próprio escritório contábil)
     escritorio = situacao = None
@@ -324,9 +305,10 @@ def identificar(razao, fantasia, *, bairro=None, cidade=None, ramo=None, tem_con
             if soltas:
                 duvidas.append(("escritorio_contabil", f"menção a contabilidade fora do padrão (“{soltas[0]}”)."))
 
-    # --- segmento: duas primeiras palavras significativas do nome fantasia (só para clientes e ex-clientes)
+    # --- segmento: duas primeiras palavras significativas do nome fantasia (trecho antes do asterisco); com o
+    #     Nome Fantasia vazio, o trecho da Razão Social depois do primeiro asterisco
     segmento = None
-    if tipo not in ("Revenda", "Fornecedor", "Contabilidade") and not contabilidade:
+    if not contabilidade:
         nome_fantasia = None
         if fan["partes"]:
             nome_fantasia = next((p["texto"] for p in fan["partes"] if p["tipo"] is None), None)
@@ -426,7 +408,67 @@ def reclassificar(db, ids: list[int] | None = None) -> dict:
                    f"FROM jsonb_to_recordset(%s::jsonb) AS v(id bigint, {cols}, perfil_auto jsonb, perfil_manual jsonb) "
                    "WHERE c.id = v.id", (json.dumps(mudancas, ensure_ascii=False),))
     return {"alterados": len(mudancas), "por_tipo": por_tipo, "duvidas": duvidas, "processados": len(rows),
-            "em": now()}
+            "em": now(), "diagnostico": diagnostico(db) if ids is None else None}
+
+
+# --------------------------------------------------------------------------- diagnóstico
+
+# "Pendente de identificação": campo que a classificação automática não conseguiu preencher.
+PENDENCIAS = {
+    "tipo_cadastro": "c.tipo_cadastro IS NULL",
+    "segmento_nome": "c.segmento_nome IS NULL AND c.tipo_cadastro IS DISTINCT FROM 'Contabilidade'",
+    "contabilidade": "c.escritorio_contabil IS NULL AND c.situacao_contabil IS NULL "
+                     "AND c.tipo_cadastro IS DISTINCT FROM 'Contabilidade'",   # o próprio escritório não fica pendente
+    "regiao1": "c.regiao1 IS NULL",
+    "regiao2": "c.regiao2 IS NULL",
+}
+ROTULOS_PENDENCIA = {"tipo_cadastro": "Tipo de cliente", "segmento_nome": "Segmento",
+                     "contabilidade": "Contabilidade", "regiao1": "Região 1", "regiao2": "Região 2 (bairro)"}
+
+
+def diagnostico(db) -> dict:
+    """Quantos clientes tiveram cada campo identificado (e quantos estão pendentes)."""
+    pend = ", ".join(f"COUNT(*) FILTER (WHERE {cond}) AS p_{k}" for k, cond in PENDENCIAS.items())
+    r = db.execute(
+        "SELECT COUNT(*) AS total, "
+        "COUNT(*) FILTER (WHERE c.perfil_auto = '{}'::jsonb) AS nunca_classificados, "
+        "COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM contratos ct WHERE ct.cliente_id = c.id)) AS contratados, "
+        "COUNT(*) FILTER (WHERE c.escritorio_contabil IS NOT NULL) AS com_escritorio, "
+        "COUNT(*) FILTER (WHERE c.situacao_contabil IS NOT NULL) AS com_situacao_contabil, "
+        "COUNT(*) FILTER (WHERE " + " OR ".join(f"({c})" for c in PENDENCIAS.values()) + ") AS com_pendencia, "
+        f"{pend} FROM clientes c").fetchone()
+    total = r["total"]
+    tipos = {(t or "Pendente de identificação"): q for t, q in db.execute(
+        "SELECT tipo_cadastro, COUNT(*) FROM clientes GROUP BY 1 ORDER BY 2 DESC").fetchall()}
+    identificados = {k: total - r[f"p_{k}"] for k in PENDENCIAS}
+    return {
+        "total": total,
+        "nunca_classificados": r["nunca_classificados"],
+        "com_pendencia": r["com_pendencia"],
+        "campos": [{"campo": k, "rotulo": ROTULOS_PENDENCIA[k], "identificados": identificados[k],
+                    "pendentes": r[f"p_{k}"]} for k in PENDENCIAS],
+        "contabilidade": {"escritorio": r["com_escritorio"], "situacao": r["com_situacao_contabil"]},
+        "situacao_contratual": {"Contratado": r["contratados"], "Cliente sem contrato": total - r["contratados"]},
+        "tipos": tipos,
+        # bairros mais frequentes sem regra de Região 1: o que vale a pena incluir no mapeamento
+        "bairros_sem_regiao": [{"cidade": c, "bairro": b, "clientes": q} for c, b, q in db.execute(
+            "SELECT MIN(cidade) AS cidade, MIN(bairro) AS bairro, COUNT(*) AS q FROM clientes "
+            "WHERE regiao1 IS NULL AND bairro IS NOT NULL "
+            "GROUP BY lower(unaccent(cidade)), lower(unaccent(bairro)) ORDER BY 3 DESC, 2 LIMIT 15").fetchall()],
+    }
+
+
+def pendentes(db) -> list[dict]:
+    """Clientes com algum campo pendente de identificação (para o CSV)."""
+    from .validation import display_name, format_cnpj
+    cols = ", ".join(f"({cond}) AS p_{k}" for k, cond in PENDENCIAS.items())
+    rows = db.execute(
+        f"SELECT c.codigo, c.cnpj, c.razao_social, c.nome_fantasia, c.bairro, c.cidade, {cols} FROM clientes c "
+        "WHERE " + " OR ".join(f"({c})" for c in PENDENCIAS.values()) + " ORDER BY c.codigo").fetchall()
+    return [{"codigo": r["codigo"], "documento": format_cnpj(r["cnpj"]) or "", "nome": display_name(dict(r)),
+             "razao_social": r["razao_social"] or "", "nome_fantasia": r["nome_fantasia"] or "",
+             "bairro": r["bairro"] or "", "cidade": r["cidade"] or "",
+             "pendentes": ", ".join(ROTULOS_PENDENCIA[k] for k in PENDENCIAS if r[f"p_{k}"])} for r in rows]
 
 
 def limpar_valor(campo: str, valor) -> tuple[str | None, str | None]:

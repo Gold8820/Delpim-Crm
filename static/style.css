@@ -338,3 +338,9 @@ textarea:focus { outline: 2px solid var(--primary-soft); border-color: var(--pri
 .pill { padding: 2px 10px; border-radius: 999px; background: var(--surface-2, #f2f4f7); font-size: 12px; }
 #regioes-texto { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 @media (max-width: 720px) { .toolbar-perfil .filter { flex: 1 1 45%; } .perfil-acoes { margin-left: 0; } }
+
+.perfil-aviso { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 12px; }
+.diag-titulo { margin: 12px 0 6px; font-size: 14px; }
+.diag-tabela { border-collapse: collapse; min-width: 320px; font-size: 13px; margin-bottom: 6px; }
+.diag-tabela th, .diag-tabela td { padding: 4px 10px; border-bottom: 1px solid var(--border, #e4e7ec); text-align: left; }
+.diag-tabela .num { text-align: right; }

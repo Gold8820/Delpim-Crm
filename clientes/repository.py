@@ -34,7 +34,7 @@ def serialize(row: Mapping) -> dict:
         manual = json.loads(manual) if isinstance(manual, str) else manual
         data["perfil_manual"] = manual if isinstance(manual, list) else []
     if "tem_contrato" in keys:
-        data["situacao_contratual"] = "Contratado" if row["tem_contrato"] else "Não contratado"
+        data["situacao_contratual"] = "Contratado" if row["tem_contrato"] else "Cliente sem contrato"
     return data
 
 
@@ -131,7 +131,7 @@ def list_perfil_opcoes(db) -> dict:
     return opcoes
 
 
-def _where(db, *, q="", classificacao="", segmento="", mes=None, contrato="", **perfil_filtros):
+def _where(db, *, q="", classificacao="", segmento="", mes=None, contrato="", pendente="", **perfil_filtros):
     """Condições combináveis da lista de clientes (todas ao mesmo tempo, com E)."""
     mes = mes or latest_month(db)
     where = ["1=1"]
@@ -159,6 +159,10 @@ def _where(db, *, q="", classificacao="", segmento="", mes=None, contrato="", **
         where.append(_TEM_CONTRATO)
     elif contrato == "nao":
         where.append("NOT " + _TEM_CONTRATO)
+    if pendente in perfil.PENDENCIAS:          # pendente de identificação em um campo
+        where.append(perfil.PENDENCIAS[pendente])
+    elif pendente == "algum":
+        where.append("(" + " OR ".join(f"({c})" for c in perfil.PENDENCIAS.values()) + ")")
     base = ("FROM clientes c LEFT JOIN pagamentos_mensais p "
             "ON p.cliente_id = c.id AND p.mes_referencia = %(mes)s "
             "WHERE " + " AND ".join(where))

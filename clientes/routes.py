@@ -46,7 +46,11 @@ def meta():
         "mes_atual": date.today().strftime("%Y-%m"),
         "segmentos": repo.list_segments(db),
         "perfil": {"opcoes": repo.list_perfil_opcoes(db), "tipos": list(perfil.TIPOS),
-                   "situacoes_contabeis": list(perfil.SITUACOES_CONTABEIS), "rotulos": perfil.ROTULOS},
+                   "situacoes_contabeis": list(perfil.SITUACOES_CONTABEIS), "rotulos": perfil.ROTULOS,
+                   "situacoes_contratuais": list(perfil.SITUACOES_CONTRATUAIS),
+                   "pendencias": perfil.ROTULOS_PENDENCIA,
+                   "nunca_classificados": db.execute(
+                       "SELECT COUNT(*) FROM clientes WHERE perfil_auto = '{}'::jsonb").fetchone()[0]},
         "faixas": describe_faixas(repo.load_faixas(db)),
         "ufs": UFS,
         "campos": [{"chave": k, "rotulo": v} for k, v in FIELD_LABELS.items()],
@@ -137,7 +141,7 @@ def _filtros(a) -> dict:
     """Filtros da lista de clientes (combináveis), vindos da URL ou do corpo JSON."""
     return {"q": str(a.get("q") or ""), "classificacao": str(a.get("classificacao") or ""),
             "segmento": str(a.get("segmento") or ""), "mes": a.get("mes") or None,
-            "contrato": str(a.get("contrato") or ""),
+            "contrato": str(a.get("contrato") or ""), "pendente": str(a.get("pendente") or ""),
             **{k: str(a.get(k) or "")[:200] for k in repo.FILTROS_PERFIL}}
 
 
@@ -177,6 +181,27 @@ def perfil_reclassify():
     resultado = perfil.reclassificar(db)
     db.commit()
     return jsonify(resultado)
+
+
+@bp.get("/api/perfil/diagnostico")
+def perfil_diagnostico():
+    """Relatório: quantos clientes tiveram cada campo identificado e quantos estão pendentes."""
+    return jsonify(perfil.diagnostico(get_db()))
+
+
+@bp.get("/api/perfil/pendentes.csv")
+def perfil_pendentes_csv():
+    import csv
+    import io
+    buffer = io.StringIO()
+    w = csv.writer(buffer, delimiter=";")
+    w.writerow(["Código", "Documento", "Cliente", "Razão social", "Nome fantasia", "Bairro", "Cidade",
+                "Pendente de identificação"])
+    for p in perfil.pendentes(get_db()):
+        w.writerow([p["codigo"], p["documento"], p["nome"], p["razao_social"], p["nome_fantasia"], p["bairro"],
+                    p["cidade"], p["pendentes"]])
+    return Response("\ufeff" + buffer.getvalue(), content_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="pendentes-de-identificacao.csv"'})
 
 
 @bp.get("/api/configuracoes/regioes")

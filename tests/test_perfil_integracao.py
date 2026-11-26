@@ -45,7 +45,7 @@ def por_doc(client):
     return {c["cnpj"].replace(".", "").replace("/", "").replace("-", ""): c for c in lista(client)["clientes"]}
 
 
-def test_importacao_classifica_e_relata_duvidas(client):
+def test_importacao_classifica_e_relata_duvidas(client, consulta):
     feito_c, feito_k = importar(client)
     assert feito_k["perfil"]["processados"] == 9
     c = por_doc(client)
@@ -53,17 +53,20 @@ def test_importacao_classifica_e_relata_duvidas(client):
     assert (a["tipo_cadastro"], a["escritorio_contabil"], a["segmento_nome"], a["regiao1"], a["regiao2"],
             a["situacao_contratual"]) == ("Cliente", "CONTABILIDADE DETECTA", "ADEGA PRONTO", "Zona Leste", "Penha",
                                           "Contratado")
+    # salvo nos campos do banco (não só calculado na tela)
+    assert tuple(consulta("SELECT segmento_nome, escritorio_contabil, regiao1, perfil_auto->>'segmento_nome' FROM clientes "
+                          "WHERE cnpj = %s", (cnpj(1),))[0].values()) ==         ("ADEGA PRONTO", "CONTABILIDADE DETECTA", "Zona Leste", "ADEGA PRONTO")
     assert a["razao_social"].startswith("A M DO NASCIMENTO")        # o nome original não é alterado
     assert c[cnpj(2)]["tipo_cadastro"] == "Ex-cliente" and c[cnpj(2)]["razao_social"].startswith("(INATIVO)")
-    assert c[cnpj(2)]["regiao2"] == "Mooca" and c[cnpj(2)]["situacao_contratual"] == "Contratado"
+    assert c[cnpj(2)]["regiao2"] == "Parque da Mooca" and c[cnpj(2)]["situacao_contratual"] == "Contratado"
     assert c[cnpj(3)]["tipo_cadastro"] == "Revenda" and c[cnpj(3)]["situacao_contabil"] == "Não utiliza"
     m = c[cnpj(4)]
     assert m["segmento_nome"] == "MERCADO MINI" and m["situacao_contabil"] == "Solicitar contato"
     assert m["regiao1"] is None and m["regiao2"] == "Cidade Jardim Cumbica"     # Guarulhos não mapeado: não inventa
-    assert m["tipo_cadastro"] is None and m["situacao_contratual"] == "Não contratado"   # não vira Lead
+    assert m["tipo_cadastro"] == "Cliente" and m["situacao_contratual"] == "Cliente sem contrato"
     assert c[cnpj(5)]["tipo_cadastro"] == "Contabilidade" and c[cnpj(5)]["escritorio_contabil"] is None
-    assert c[cnpj(6)]["tipo_cadastro"] is None
-    assert c[cnpj(7)]["tipo_cadastro"] == "Cliente sem contrato"
+    assert c[cnpj(6)]["tipo_cadastro"] == "Cliente" and c[cnpj(6)]["segmento_nome"] is None
+    assert c[cnpj(7)]["tipo_cadastro"] == "Cliente" and c[cnpj(7)]["situacao_contratual"] == "Cliente sem contrato"
     assert c[cnpj(9)]["regiao1"] == "Zona Leste" and c[cnpj(9)]["escritorio_contabil"] is None
     duvidas = feito_k["perfil"]["duvidas"]
     assert [(d["documento"].replace(".", "").replace("/", "").replace("-", ""), d["campo"]) for d in duvidas] == [
@@ -79,7 +82,9 @@ def test_filtros_combinados(client):
         sorted([cnpj(2), cnpj(8)])
     assert docs(lista(client, segmento_nome="ADEGA PRONTO")) == [cnpj(1)]
     assert docs(lista(client, regiao2="Penha", contrato="sim")) == sorted([cnpj(1), cnpj(5)])
-    assert docs(lista(client, tipo_cadastro="__vazio__")) == sorted([cnpj(4), cnpj(6)])
+    assert docs(lista(client, segmento_nome="__vazio__")) == sorted([cnpj(5), cnpj(6)])
+    assert docs(lista(client, pendente="regiao1")) == sorted([cnpj(4), cnpj(6)])   # Guarulhos e Vila Nhocune sem regra
+    assert cnpj(9) in docs(lista(client, pendente="contabilidade"))
     meta = client.get("/api/meta").json["perfil"]
     assert "CONTABILIDADE BATISTA" in meta["opcoes"]["escritorio_contabil"]
     assert meta["opcoes"]["regiao1"] == ["Zona Leste"] and "Revenda" in meta["tipos"]
@@ -91,18 +96,18 @@ def test_edicao_manual_preservada_na_reimportacao(client):
     cid = c[cnpj(6)]["id"]
     atual = client.get(f"/api/clientes/{cid}").json
     corpo = {**{k: atual[k] for k in ("codigo", "razao_social", "nome_fantasia", "cnpj", "cidade", "bairro")},
-             "vendedor": "Carla", "perfil": {"tipo_cadastro": "Lead", "regiao1": "Zona Leste", "regiao2": "Penha"}}
+             "vendedor": "Carla", "perfil": {"tipo_cadastro": "Revenda", "regiao1": "Zona Leste", "regiao2": "Penha"}}
     r = client.put(f"/api/clientes/{cid}", json=corpo)
     assert r.status_code == 200, r.json
     assert (r.json["tipo_cadastro"], r.json["regiao1"], r.json["regiao2"], r.json["vendedor"]) == \
-        ("Lead", "Zona Leste", "Penha", "Carla")
+        ("Revenda", "Zona Leste", "Penha", "Carla")
     assert set(r.json["perfil_manual"]) == {"tipo_cadastro", "regiao1", "regiao2"}
     assert client.put(f"/api/clientes/{cid}", json={**corpo, "perfil": {"tipo_cadastro": "Qualquer"}}).status_code == 400
 
     # reimportação: a planilha não tem informação nova para esses campos nem coluna de vendedor → nada muda
     importar(client)
     d = client.get(f"/api/clientes/{cid}").json
-    assert (d["tipo_cadastro"], d["regiao1"], d["regiao2"], d["vendedor"]) == ("Lead", "Zona Leste", "Penha", "Carla")
+    assert (d["tipo_cadastro"], d["regiao1"], d["regiao2"], d["vendedor"]) == ("Revenda", "Zona Leste", "Penha", "Carla")
     # o nome passou a ter (INATIVO): informação nova substitui o tipo manual; a região manual continua
     etapa(client, "clientes", CAB_CLIENTES, linhas_clientes({6: {"Razão Social": "(INATIVO) DIOGO DA SILVA ALMEIDA COSTA"}}))
     d = client.get(f"/api/clientes/{cid}").json
@@ -127,9 +132,48 @@ def test_vendedor_da_planilha_e_em_lote(client):
 def test_mapeamento_de_regioes_configuravel(client):
     importar(client)
     atual = client.get("/api/configuracoes/regioes").json
-    assert "São Paulo; Penha; Zona Leste; Penha" in atual["texto"]
+    assert "São Paulo; Penha; Zona Leste" in atual["texto"]
     r = client.put("/api/configuracoes/regioes", json={"texto": atual["texto"] + "\nGuarulhos; ; Grande SP"})
     assert r.status_code == 200, r.json
     assert por_doc(client)[cnpj(4)]["regiao1"] == "Grande SP"
     assert client.put("/api/configuracoes/regioes", json={"texto": "Guarulhos"}).status_code == 400
     assert client.post("/api/perfil/reclassificar").json["processados"] == 9
+
+
+def test_diagnostico_e_pendentes(client):
+    importar(client)
+    d = client.get("/api/perfil/diagnostico").json
+    campos = {c["campo"]: (c["identificados"], c["pendentes"]) for c in d["campos"]}
+    assert d["total"] == 9 and d["nunca_classificados"] == 0
+    assert campos["tipo_cadastro"] == (9, 0)
+    assert campos["segmento_nome"] == (8, 1)            # pessoa física sem fantasia (6); 5 é escritório contábil
+    assert campos["regiao1"] == (7, 2)                  # Guarulhos e Vila Nhocune sem regra
+    assert campos["regiao2"] == (9, 0)
+    assert campos["contabilidade"] == (6, 3)            # 6, 7 e 9 sem escritório; 5 é o próprio escritório
+    assert d["situacao_contratual"] == {"Contratado": 3, "Cliente sem contrato": 6}
+    assert d["tipos"]["Ex-cliente"] == 3 and "Lead" not in d["tipos"]
+    csv = client.get("/api/perfil/pendentes.csv")
+    texto = csv.data.decode("utf-8-sig")
+    assert csv.status_code == 200 and "Pendente de identificação" in texto and "Região 1" in texto
+
+
+def test_clientes_existentes_nunca_classificados_aparecem_no_meta(client, consulta):
+    importar(client)
+    consulta("UPDATE clientes SET perfil_auto = '{}'::jsonb, tipo_cadastro = NULL")
+    assert client.get("/api/meta").json["perfil"]["nunca_classificados"] == 9
+    client.post("/api/perfil/reclassificar")
+    assert client.get("/api/meta").json["perfil"]["nunca_classificados"] == 0
+
+
+def test_reimportacao_sem_alteracoes_preenche_clientes_antigos(client, consulta):
+    """Situação real: clientes importados antes dos campos novos (colunas vazias) e reimportação idêntica."""
+    importar(client)
+    consulta("UPDATE clientes SET perfil_auto = '{}'::jsonb, tipo_cadastro = NULL, escritorio_contabil = NULL, "
+             "situacao_contabil = NULL, segmento_nome = NULL, regiao1 = NULL, regiao2 = NULL")
+    _, _, feito = etapa(client, "clientes", CAB_CLIENTES, linhas_clientes())
+    assert feito["clientes_novos"] == 0 and feito["clientes_atualizados"] == 0      # nada mudou no cadastro...
+    assert feito["perfil"]["diagnostico"]["nunca_classificados"] == 0               # ...mas o perfil foi preenchido
+    c = por_doc(client)[cnpj(1)]
+    assert (c["segmento_nome"], c["escritorio_contabil"], c["regiao1"], c["regiao2"]) == \
+        ("ADEGA PRONTO", "CONTABILIDADE DETECTA", "Zona Leste", "Penha")
+    assert len(lista(client, segmento_nome="ADEGA PRONTO", regiao1="Zona Leste")["clientes"]) == 1
