@@ -6,31 +6,39 @@
   <title>Clientes</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b5bdb'/%3E%3Cpath d='M9 22V10h5a4 4 0 010 8h-5' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}?v={{ version }}">
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Menu principal">
       <div class="brand">
         <span class="brand-mark">IC</span>
         <span class="brand-text">Inteligência<br>Comercial</span>
       </div>
       <nav>
-        <a class="nav-item active" href="#clientes" data-view="clientes">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-          Clientes
-        </a>
-        <a class="nav-item" href="#configuracoes" data-view="configuracoes">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
-          Configurações de importação
-        </a>
+        <span class="nav-section">Comercial</span>
+        <a class="nav-item active" href="#clientes" data-view="clientes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg><span>Clientes</span></a>
+        <span class="nav-section">Administração</span>
+        <a class="nav-item" href="#configuracoes" data-view="configuracoes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span>Configurações</span></a>
       </nav>
-      <div class="sidebar-user" id="sidebar-user" hidden>
-        <span id="usuario-email"></span>
-        <button class="btn btn-sm" id="btn-sair" type="button">Sair</button>
-      </div>
+      <p class="sidebar-foot">CRM e inteligência geográfica</p>
     </aside>
+    <div class="sidebar-overlay" id="sidebar-overlay" hidden></div>
 
     <main class="main">
+      <header class="topbar">
+        <button type="button" class="icon-btn menu-toggle" id="menu-toggle" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <nav class="crumbs" aria-label="Você está em"><span class="crumb-root">Inteligência Comercial</span><span class="crumb-sep" aria-hidden="true">/</span><b id="topbar-page">Clientes</b></nav>
+        <div class="topbar-user" id="sidebar-user" hidden>
+          <span class="avatar" id="usuario-avatar" aria-hidden="true"></span>
+          <span class="topbar-email" id="usuario-email"></span>
+          <button class="btn btn-sm" id="btn-sair" type="button">Sair</button>
+        </div>
+      </header>
+
+      <div class="content">
       <div id="view-clients">
       <header class="page-header">
         <div>
@@ -40,61 +48,77 @@
         <div class="actions">
           <button class="btn" id="btn-import" type="button">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-            Importar planilha
+            <span>Importar planilha</span>
           </button>
           <button class="btn btn-primary" id="btn-new" type="button">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-            Novo cliente
+            <span>Novo cliente</span>
           </button>
         </div>
       </header>
 
-      <section class="card toolbar">
-        <label class="search">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input type="search" id="search" placeholder="Pesquisar por nome, código ou CNPJ" autocomplete="off" aria-label="Pesquisar clientes">
-        </label>
-        <label class="filter">
-          <span>Classificação</span>
-          <select id="f-class">
-            <option value="">Todas</option>
-            <option value="A+">A+</option>
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="C">C</option>
-            <option value="none">Sem valor no mês</option>
-          </select>
-        </label>
-        <label class="filter">
-          <span>Ramo de atividade</span>
-          <select id="f-segment"><option value="">Todos</option></select>
-        </label>
-        <label class="filter">
-          <span>Mês de referência</span>
-          <select id="f-month"></select>
-        </label>
-      </section>
-      <section class="card toolbar toolbar-perfil" id="perfil-filtros" aria-label="Filtros do perfil comercial"></section>
+      <section class="kpis" id="kpis" aria-label="Indicadores da carteira"></section>
       <div class="notice perfil-aviso" id="perfil-aviso" hidden></div>
 
-      <div class="legend" id="legend" aria-label="Faixas de classificação"></div>
-
       <section class="card table-card">
+        <div class="list-toolbar">
+          <label class="search">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input type="search" id="search" placeholder="Pesquisar por nome, código ou CNPJ" autocomplete="off" aria-label="Pesquisar clientes">
+          </label>
+          <label class="filter filter-inline">
+            <span>Mês</span>
+            <select id="f-month" aria-label="Mês de referência"></select>
+          </label>
+          <label class="filter filter-inline">
+            <span>Classificação</span>
+            <select id="f-class" aria-label="Classificação">
+              <option value="">Todas</option>
+              <option value="A+">A+</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="none">Sem valor no mês</option>
+            </select>
+          </label>
+          <div class="toolbar-buttons">
+            <button class="btn btn-sm" id="btn-filtros" type="button" aria-expanded="false" aria-controls="painel-filtros">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>
+              Filtros <span class="count" id="filtros-count" hidden></span>
+            </button>
+            <div class="col-menu">
+              <button class="btn btn-sm" id="btn-colunas" type="button" aria-expanded="false" aria-controls="col-pop">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></svg>
+                Colunas <span class="count muted-count" id="colunas-ocultas" hidden></span>
+              </button>
+              <div class="col-pop" id="col-pop" hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="filter-panel" id="painel-filtros" hidden>
+          <label class="filter">
+            <span>Ramo de atividade</span>
+            <select id="f-segment"><option value="">Todos</option></select>
+          </label>
+          <div class="perfil-filtros" id="perfil-filtros" aria-label="Filtros do perfil comercial"></div>
+        </div>
+        <div class="legend" id="legend" aria-label="Faixas de classificação"></div>
+
         <div class="table-wrap">
           <table id="table">
             <thead>
               <tr>
-                <th data-sort="codigo">Código</th>
-                <th data-sort="nome">Cliente</th>
-                <th>Tipo / Região</th>
-                <th data-sort="cnpj">CNPJ</th>
-                <th data-sort="cidade">Cidade</th>
-                <th data-sort="estado">Estado</th>
-                <th data-sort="segmento">Ramo</th>
-                <th data-sort="vendedor">Vendedor responsável</th>
-                <th data-sort="valor" class="num">Valor pago no mês</th>
-                <th data-sort="classificacao">Classificação</th>
-                <th class="col-actions"><span class="sr-only">Ações</span></th>
+                <th data-col="codigo" data-sort="codigo">Código</th>
+                <th data-col="cliente" data-sort="nome">Cliente</th>
+                <th data-col="perfil">Tipo / Região</th>
+                <th data-col="cnpj" data-sort="cnpj">CNPJ</th>
+                <th data-col="cidade" data-sort="cidade">Cidade</th>
+                <th data-col="estado" data-sort="estado">UF</th>
+                <th data-col="ramo" data-sort="segmento">Ramo</th>
+                <th data-col="vendedor" data-sort="vendedor">Vendedor</th>
+                <th data-col="valor" data-sort="valor" class="num">Valor no mês</th>
+                <th data-col="classificacao" data-sort="classificacao">Classe</th>
+                <th data-col="acoes" class="col-actions"><span class="sr-only">Ações</span></th>
               </tr>
             </thead>
             <tbody id="tbody"></tbody>
@@ -118,7 +142,7 @@
       <section id="view-config" hidden>
         <header class="page-header">
           <div>
-            <h1>Configurações de importação</h1>
+            <h1>Configurações</h1>
             <p class="muted">Mapeamentos de colunas salvos. O padrão de cada planilha é aplicado automaticamente quando você seleciona os arquivos.</p>
           </div>
         </header>
@@ -151,11 +175,12 @@
         </section>
         <div id="config-lists"></div>
       </section>
+      </div>
     </main>
   </div>
 
   <!-- Formulário de cliente -->
-  <dialog id="dlg-client" class="modal modal-lg">
+  <dialog id="dlg-client" class="modal modal-form">
     <form id="form-client" novalidate>
       <header class="modal-head">
         <h2 id="client-title">Novo cliente</h2>
@@ -163,70 +188,78 @@
       </header>
       <div class="modal-body">
         <div class="form-error" id="client-error" hidden></div>
+        <div class="form-cols">
+          <div class="form-col">
+            <fieldset class="form-section">
+              <legend>Identificação</legend>
+              <div class="form-grid">
+                <div class="field"><label for="c-codigo">Código do cliente *</label><input id="c-codigo" name="codigo" maxlength="40"><small class="err"></small></div>
+                <div class="field"><label for="c-cnpj">CNPJ / CPF</label><input id="c-cnpj" name="cnpj" inputmode="text" maxlength="18" placeholder="00.000.000/0000-00" autocomplete="off"><small class="err"></small></div>
+                <div class="field"><label for="c-telefone">Telefone</label><input id="c-telefone" name="telefone" inputmode="tel" maxlength="40" placeholder="(00) 00000-0000"><small class="err"></small></div>
+                <div class="field w-full"><label for="c-razao">Razão social</label><input id="c-razao" name="razao_social" maxlength="200"><small class="err"></small></div>
+                <div class="field w2"><label for="c-fantasia">Nome fantasia</label><input id="c-fantasia" name="nome_fantasia" maxlength="200"><small class="err"></small></div>
+                <div class="field"><label for="c-email">E-mail</label><input id="c-email" name="email" type="email" maxlength="200"><small class="err"></small></div>
+              </div>
+            </fieldset>
 
-        <fieldset>
-          <legend>Identificação</legend>
-          <div class="grid">
-            <div class="field span-3"><label for="c-codigo">Código do cliente *</label><input id="c-codigo" name="codigo" maxlength="40"><small class="err"></small></div>
-            <div class="field span-5"><label for="c-razao">Razão social</label><input id="c-razao" name="razao_social" maxlength="200"><small class="err"></small></div>
-            <div class="field span-4"><label for="c-fantasia">Nome fantasia</label><input id="c-fantasia" name="nome_fantasia" maxlength="200"><small class="err"></small></div>
-            <div class="field span-4"><label for="c-cnpj">CNPJ</label><input id="c-cnpj" name="cnpj" inputmode="text" maxlength="18" placeholder="00.000.000/0000-00" autocomplete="off"><small class="err"></small></div>
-            <div class="field span-4"><label for="c-telefone">Telefone</label><input id="c-telefone" name="telefone" inputmode="tel" maxlength="40" placeholder="(00) 00000-0000"><small class="err"></small></div>
-            <div class="field span-4"><label for="c-email">E-mail</label><input id="c-email" name="email" type="email" maxlength="200"><small class="err"></small></div>
-          </div>
-        </fieldset>
+            <fieldset class="form-section">
+              <legend>Endereço</legend>
+              <div class="form-grid">
+                <div class="field"><label for="c-cep">CEP</label><input id="c-cep" name="cep" inputmode="numeric" maxlength="9" placeholder="00000-000"><small class="err"></small></div>
+                <div class="field w2"><label for="c-endereco">Endereço</label><input id="c-endereco" name="endereco" maxlength="200"><small class="err"></small></div>
+                <div class="field"><label for="c-numero">Número</label><input id="c-numero" name="numero" maxlength="20"><small class="err"></small></div>
+                <div class="field w2"><label for="c-complemento">Complemento</label><input id="c-complemento" name="complemento" maxlength="100"><small class="err"></small></div>
+                <div class="field"><label for="c-bairro">Bairro</label><input id="c-bairro" name="bairro" maxlength="100"><small class="err"></small></div>
+                <div class="field"><label for="c-cidade">Cidade</label><input id="c-cidade" name="cidade" maxlength="100"><small class="err"></small></div>
+                <div class="field"><label for="c-estado">Estado</label><select id="c-estado" name="estado"><option value="">—</option></select><small class="err"></small></div>
+              </div>
+            </fieldset>
 
-        <fieldset id="perfil-box">
-          <legend>Perfil comercial</legend>
-          <p class="muted perfil-ajuda">Preenchido automaticamente pela importação (nome, contratos e bairro). Você pode corrigir:
-            a edição manual é preservada nas próximas importações enquanto a planilha não trouxer informação nova.</p>
-          <div class="grid">
-            <div class="field span-4"><label for="pf-tipo_cadastro">Tipo de cadastro</label><select id="pf-tipo_cadastro" data-perfil="tipo_cadastro"></select><small class="dica" data-pf-dica="tipo_cadastro"></small><small class="err"></small></div>
-            <div class="field span-4"><label>Situação contratual</label><div class="readonly" id="pf-contratual">—</div><small class="dica">pelos contratos relacionados</small></div>
-            <div class="field span-4"><label for="pf-segmento_nome">Segmento</label><input id="pf-segmento_nome" data-perfil="segmento_nome" maxlength="120" list="dl-pf-segmento"><datalist id="dl-pf-segmento"></datalist><small class="dica" data-pf-dica="segmento_nome"></small><small class="err"></small></div>
-            <div class="field span-5"><label for="pf-escritorio_contabil">Escritório de contabilidade</label><input id="pf-escritorio_contabil" data-perfil="escritorio_contabil" maxlength="120" list="dl-pf-escritorio"><datalist id="dl-pf-escritorio"></datalist><small class="dica" data-pf-dica="escritorio_contabil"></small><small class="err"></small></div>
-            <div class="field span-3"><label for="pf-situacao_contabil">Atendimento contábil</label><select id="pf-situacao_contabil" data-perfil="situacao_contabil"></select><small class="dica" data-pf-dica="situacao_contabil"></small><small class="err"></small></div>
-            <div class="field span-2"><label for="pf-regiao1">Região 1</label><input id="pf-regiao1" data-perfil="regiao1" maxlength="120" list="dl-pf-regiao1" placeholder="Zona Leste"><datalist id="dl-pf-regiao1"></datalist><small class="dica" data-pf-dica="regiao1"></small><small class="err"></small></div>
-            <div class="field span-2"><label for="pf-regiao2">Região 2</label><input id="pf-regiao2" data-perfil="regiao2" maxlength="120" list="dl-pf-regiao2" placeholder="Bairro"><datalist id="dl-pf-regiao2"></datalist><small class="dica" data-pf-dica="regiao2"></small><small class="err"></small></div>
+            <fieldset class="form-section">
+              <legend>Observações</legend>
+              <div class="field"><label for="c-observacoes" class="sr-only">Observações gerais do cliente</label><textarea id="c-observacoes" name="observacoes" rows="3" maxlength="4000" placeholder="Anotações sobre o cliente. As quebras de linha são mantidas."></textarea><small class="err"></small></div>
+            </fieldset>
           </div>
-        </fieldset>
 
-        <fieldset>
-          <legend>Endereço</legend>
-          <div class="grid">
-            <div class="field span-3"><label for="c-cep">CEP</label><input id="c-cep" name="cep" inputmode="numeric" maxlength="9" placeholder="00000-000"><small class="err"></small></div>
-            <div class="field span-6"><label for="c-endereco">Endereço</label><input id="c-endereco" name="endereco" maxlength="200"><small class="err"></small></div>
-            <div class="field span-3"><label for="c-numero">Número</label><input id="c-numero" name="numero" maxlength="20"><small class="err"></small></div>
-            <div class="field span-4"><label for="c-complemento">Complemento</label><input id="c-complemento" name="complemento" maxlength="100"><small class="err"></small></div>
-            <div class="field span-4"><label for="c-bairro">Bairro</label><input id="c-bairro" name="bairro" maxlength="100"><small class="err"></small></div>
-            <div class="field span-2"><label for="c-cidade">Cidade</label><input id="c-cidade" name="cidade" maxlength="100"><small class="err"></small></div>
-            <div class="field span-2"><label for="c-estado">Estado</label><select id="c-estado" name="estado"><option value="">—</option></select><small class="err"></small></div>
-          </div>
-        </fieldset>
+          <div class="form-col">
+            <fieldset class="form-section" id="perfil-box">
+              <legend>Perfil comercial</legend>
+              <p class="muted perfil-ajuda">Preenchido pela importação (nome, contratos e bairro). A correção manual é preservada nas próximas importações.</p>
+              <div class="form-grid">
+                <div class="field"><label for="pf-tipo_cadastro">Tipo de cadastro</label><select id="pf-tipo_cadastro" data-perfil="tipo_cadastro"></select><small class="dica" data-pf-dica="tipo_cadastro"></small><small class="err"></small></div>
+                <div class="field"><label>Situação contratual</label><div class="readonly" id="pf-contratual">—</div><small class="dica">pelos contratos relacionados</small></div>
+                <div class="field"><label for="pf-segmento_nome">Segmento</label><input id="pf-segmento_nome" data-perfil="segmento_nome" maxlength="120" list="dl-pf-segmento"><datalist id="dl-pf-segmento"></datalist><small class="dica" data-pf-dica="segmento_nome"></small><small class="err"></small></div>
+                <div class="field w2"><label for="pf-escritorio_contabil">Escritório de contabilidade</label><input id="pf-escritorio_contabil" data-perfil="escritorio_contabil" maxlength="120" list="dl-pf-escritorio"><datalist id="dl-pf-escritorio"></datalist><small class="dica" data-pf-dica="escritorio_contabil"></small><small class="err"></small></div>
+                <div class="field"><label for="pf-situacao_contabil">Atendimento contábil</label><select id="pf-situacao_contabil" data-perfil="situacao_contabil"></select><small class="dica" data-pf-dica="situacao_contabil"></small><small class="err"></small></div>
+                <div class="field"><label for="pf-regiao1">Região 1</label><input id="pf-regiao1" data-perfil="regiao1" maxlength="120" list="dl-pf-regiao1" placeholder="Zona Leste"><datalist id="dl-pf-regiao1"></datalist><small class="dica" data-pf-dica="regiao1"></small><small class="err"></small></div>
+                <div class="field w2"><label for="pf-regiao2">Região 2</label><input id="pf-regiao2" data-perfil="regiao2" maxlength="120" list="dl-pf-regiao2" placeholder="Bairro"><datalist id="dl-pf-regiao2"></datalist><small class="dica" data-pf-dica="regiao2"></small><small class="err"></small></div>
+              </div>
+            </fieldset>
 
-        <fieldset>
-          <legend>Informações comerciais</legend>
-          <div class="grid">
-            <div class="field span-4"><label for="c-segmento">Ramo de atividade</label><input id="c-segmento" name="segmento" maxlength="100" list="dl-segments"><datalist id="dl-segments"></datalist><small class="err"></small></div>
-            <div class="field span-4"><label for="c-vendedor">Vendedor responsável</label><input id="c-vendedor" name="vendedor" maxlength="100" list="dl-vendedores"><datalist id="dl-vendedores"></datalist><small class="err"></small></div>
-            <div class="field span-4"></div>
-            <div class="field span-4"><label for="c-mes">Mês de referência</label><select id="c-mes" name="mes"></select><small class="err"></small></div>
-            <div class="field span-4"><label for="c-valor">Valor total pago no mês</label><div class="money"><span>R$</span><input id="c-valor" name="valor" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><small class="err"></small></div>
-            <div class="field span-4"><label>Classificação</label><div class="class-preview" id="class-preview"><span class="muted">Informe o valor</span></div></div>
+            <fieldset class="form-section">
+              <legend>Informações comerciais</legend>
+              <div class="form-grid">
+                <div class="field w2"><label for="c-vendedor">Vendedor responsável</label><input id="c-vendedor" name="vendedor" maxlength="100" list="dl-vendedores"><datalist id="dl-vendedores"></datalist><small class="err"></small></div>
+                <div class="field"><label for="c-segmento">Ramo de atividade</label><input id="c-segmento" name="segmento" maxlength="100" list="dl-segments"><datalist id="dl-segments"></datalist><small class="err"></small></div>
+                <div class="field"><label for="c-mes">Mês de referência</label><select id="c-mes" name="mes"></select><small class="err"></small></div>
+                <div class="field"><label for="c-valor">Valor pago no mês</label><div class="money"><span>R$</span><input id="c-valor" name="valor" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><small class="err"></small></div>
+                <div class="field"><label>Classificação</label><div class="class-preview" id="class-preview"><span class="muted">Informe o valor</span></div></div>
+              </div>
+            </fieldset>
           </div>
-          <div class="history" id="history" hidden></div>
+        </div>
+
+        <section class="form-section form-related" aria-label="Contratos, histórico e dados da planilha">
           <div class="history" id="contracts-box" hidden></div>
-          <div class="history" id="extras-box" hidden></div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Observações</legend>
-          <div class="grid">
-            <div class="field span-12"><label for="c-observacoes">Observações gerais do cliente</label><textarea id="c-observacoes" name="observacoes" rows="4" maxlength="4000" placeholder="Anotações sobre o cliente. As quebras de linha são mantidas."></textarea><small class="err"></small></div>
+          <div class="related-row">
+            <div class="history" id="history" hidden></div>
+            <div class="history" id="extras-box" hidden></div>
           </div>
-        </fieldset>
+        </section>
       </div>
       <footer class="modal-foot">
+        <span class="muted foot-hint">* obrigatório</span>
+        <span class="spacer"></span>
         <button type="button" class="btn" data-close>Cancelar</button>
         <button type="submit" class="btn btn-primary" id="client-save">Salvar</button>
       </footer>
@@ -316,5 +349,6 @@
   <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
   <script src="{{ url_for('static', filename='perfil.js') }}?v={{ version }}"></script>
   <script src="{{ url_for('static', filename='importacao.js') }}?v={{ version }}"></script>
+  <script src="{{ url_for('static', filename='layout.js') }}?v={{ version }}"></script>
 </body>
 </html>

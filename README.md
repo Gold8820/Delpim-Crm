@@ -252,6 +252,20 @@ Menu **Configurações de importação** → seção **Configuração da Curva A
 - **Importação:** a coluna **Observações** (ou *Observações do cliente*, *Obs*, etc.) é sugerida para clientes; **Observacao** (singular) e *Observações do contrato* são sugeridas para contratos. A coluna pode ser salva no mapeamento padrão, como as demais.
 - **Preservação nas reimportações:** célula vazia nunca apaga a observação cadastrada, mesmo com a opção "substituir por vazios". Se não houver observação cadastrada, o texto da planilha é usado. Se a planilha trouxer um texto diferente do cadastrado, o cadastrado é mantido e a prévia mostra um aviso. Para trocar o texto, edite manualmente na ficha.
 
+## Layout (estrutura visual)
+
+- Estrutura única: menu lateral (recolhível em tablet/celular, botão ☰), cabeçalho superior com o caminho da página e o
+  usuário, conteúdo central. Camada visual em `static/layout.css` (carregada depois de `style.css`) e comportamento em
+  `static/layout.js`; nenhuma regra comercial, rota ou dado mudou.
+- **Clientes:** indicadores clicáveis (carteira, contratados, sem contrato, ex-clientes, pendentes), barra com pesquisa,
+  mês e classificação; demais filtros no painel **Filtros** (com contador); **Colunas** escolhe o que aparece
+  (preferência do navegador). Quando a tela não comporta, as colunas menos importantes saem sozinhas (UF, ramo, código,
+  CNPJ, vendedor, cidade...) e o botão mostra quantas. Sem rolagem horizontal. No celular a lista vira cartões.
+- **Cadastro:** seções em duas colunas (Identificação, Endereço e Observações | Perfil comercial e Informações
+  comerciais), campos em grade fluida, contratos e histórico abaixo; Salvar/Cancelar sempre visíveis.
+- Verificado em 1366×768, 1920×1080, tablet (768) e celular (375): sem rolagem horizontal na listagem, cadastro,
+  importação e configurações.
+
 ## Perfil comercial (classificação automática e filtros)
 
 Campos preenchidos e **gravados no banco** a cada importação (inclusive reimportação sem alterações), ao salvar um

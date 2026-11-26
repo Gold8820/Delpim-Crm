@@ -118,6 +118,7 @@ async function loadMeta() {
     return `${brl(f.min_centavos)} a ${brl(f.max_centavos)}`;
   };
   if (window.perfilMeta) window.perfilMeta();
+  if (window.carregarKpis) window.carregarKpis();
   $("#legend").innerHTML = faixas.map((f) => `<span><i class="dot cls-${esc(f.classificacao)}"></i><b>${esc(f.classificacao)}</b> ${esc(range(f))}</span>`).join("");
 }
 
@@ -154,19 +155,19 @@ function renderTable(data) {
 
   $("#tbody").innerHTML = data.clientes.map((c) => {
     const sub = c.razao_social && c.nome_fantasia && c.razao_social !== c.nome_fantasia
-      ? `<div class="client-sub">${esc(c.razao_social)}</div>` : "";
+      ? `<div class="client-sub" title="${esc(c.razao_social)}">${esc(c.razao_social)}</div>` : "";
     return `<tr data-id="${c.id}">
-      <td class="code">${esc(c.codigo)}</td>
-      <td><div class="client-name">${esc(c.nome)}</div>${sub}</td>
-      <td class="perfil-cell">${esc(c.tipo_cadastro || "—")}<div class="client-sub">${esc([c.regiao1, c.regiao2].filter(Boolean).join(" · ") || "")}${c.situacao_contratual === "Cliente sem contrato" ? `<span class="tag-sem">sem contrato</span>` : ""}</div></td>
-      <td>${esc(c.cnpj || "—")}</td>
-      <td class="truncate">${esc(c.cidade || "—")}</td>
-      <td>${esc(c.estado || "—")}</td>
-      <td class="truncate">${esc(c.segmento || "—")}</td>
-      <td class="truncate">${esc(c.vendedor || "—")}</td>
-      <td class="num">${brl(c.valor_centavos)}</td>
-      <td>${badge(c.classificacao)}</td>
-      <td class="col-actions"><div class="row-actions">
+      <td class="code" data-col="codigo" data-label="Código">${esc(c.codigo)}</td>
+      <td data-col="cliente" data-label="Cliente"><div class="client-name" title="${esc(c.nome)}">${esc(c.nome)}</div>${sub}</td>
+      <td class="perfil-cell" data-col="perfil" data-label="Tipo / Região">${esc(c.tipo_cadastro || "—")}<div class="client-sub">${esc([c.regiao1, c.regiao2].filter(Boolean).join(" · ") || "")}${c.situacao_contratual === "Cliente sem contrato" ? `<span class="tag-sem">sem contrato</span>` : ""}</div></td>
+      <td data-col="cnpj" data-label="CNPJ">${esc(c.cnpj || "—")}</td>
+      <td class="truncate" data-col="cidade" data-label="Cidade" title="${esc(c.cidade || "")}">${esc(c.cidade || "—")}</td>
+      <td data-col="estado" data-label="UF">${esc(c.estado || "—")}</td>
+      <td class="truncate" data-col="ramo" data-label="Ramo" title="${esc(c.segmento || "")}">${esc(c.segmento || "—")}</td>
+      <td class="truncate" data-col="vendedor" data-label="Vendedor" title="${esc(c.vendedor || "")}">${esc(c.vendedor || "—")}</td>
+      <td class="num" data-col="valor" data-label="Valor no mês">${brl(c.valor_centavos)}</td>
+      <td data-col="classificacao" data-label="Classe">${badge(c.classificacao)}</td>
+      <td class="col-actions" data-col="acoes"><div class="row-actions">
         <button type="button" data-act="edit" aria-label="Editar ${esc(c.nome)}" title="Editar"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></button>
         <button type="button" class="del" data-act="delete" aria-label="Excluir ${esc(c.nome)}" title="Excluir"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button>
       </div></td></tr>`;
@@ -198,6 +199,7 @@ function renderTable(data) {
     if (active) th.insertAdjacentHTML("beforeend", `<span class="arrow">${state.dir === "asc" ? "▲" : "▼"}</span>`);
     th.setAttribute("aria-sort", active ? (state.dir === "asc" ? "ascending" : "descending") : "none");
   });
+  if (window.aposTabela) window.aposTabela();   // ajuste das colunas à largura da tela (layout.js)
 }
 
 async function refreshAll() {
@@ -498,7 +500,8 @@ function showView(name) {
     a.classList.toggle("active", on);
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  document.title = settings ? "Configurações de importação" : "Clientes";
+  document.title = settings ? "Configurações" : "Clientes";
+  if ($("#topbar-page")) $("#topbar-page").textContent = settings ? "Configurações" : "Clientes";
   if (settings) {
     loadConfigs(); loadCurva();
     if (window.loadFonteValor) window.loadFonteValor();

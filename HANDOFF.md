@@ -22,6 +22,12 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 13 — reformulação visual (sem mudar regras) — 374 testes
+- **Arquivos:** `static/layout.css` (tokens, menu lateral, cabeçalho, indicadores, tabela adaptável/cartões, formulário em colunas, responsivo 1180/1024/760/420), `static/layout.js` (menu recolhível, seletor de colunas com `localStorage` só para preferência de exibição, ajuste automático de colunas por prioridade, painel de filtros com contador, indicadores via `/api/perfil/diagnostico`). `templates/index.html`: nova estrutura (topbar com `#sidebar-user`, `#kpis`, `.list-toolbar`, `#painel-filtros`, formulário `.form-cols`). `app.js`: `data-col`/`data-label` nas células, ganchos `aposTabela` e `carregarKpis`, título no cabeçalho, filtro de lista com resposta mais recente.
+- **Medições (1366×768):** listagem antes 1.915px de tabela em 1.093px (página 2.135px) → 1.093/1.093 com todas as colunas padrão; formulário antes 1.538px de altura em 600px → 695px em 618px. 1920×1080: todas as 11 colunas. Celular: cartões, menu lateral sobreposto, formulário em uma coluna, configurações sem rolagem lateral.
+- **Não existem** telas separadas de Dashboard, Contratos ou Relatórios: os indicadores ficam no topo de Clientes, os contratos na ficha do cliente e os relatórios na importação/Configurações (diagnóstico).
+- **Publicado:** só no Worker de validação. Produção intocada.
+
 ### Rodada 12 — regras definitivas do perfil + diagnóstico — 374 testes
 - **Causa dos campos vazios:** a importação de 25/11 00:45 UTC rodou na versão anterior do Worker de validação (publicada 00:39); a versão com o perfil só foi publicada às 01:39. Depois disso não houve importação nem reclassificação, então as 1.279 linhas ficaram com `perfil_auto = '{}'`. Agora: aviso na tela + botão "Classificar agora" quando houver clientes nunca classificados; teste de regressão (reimportação idêntica preenche clientes antigos).
 - **Regras:** sem Lead; tipo = Ex-cliente / Fornecedor / Revenda / Contabilidade / Cliente (padrão); situação contratual "Contratado" / "Cliente sem contrato"; Região 2 = Bairro do cadastro; mapa de regiões com 3 colunas (Cidade; Bairro; Região 1; a 4ª coluna antiga é ignorada).
