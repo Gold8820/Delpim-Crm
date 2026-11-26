@@ -277,10 +277,9 @@ cliente, ao salvar o mapa de regiões ou pelo botão "Classificar agora" (`clien
 - **Situação contratual:** Contratado (há contrato relacionado pelo CPF/CNPJ) ou Cliente sem contrato. Calculada
   sempre pelos contratos.
 - **Contabilidade:** o texto associado a CONTABILIDADE/CONTADOR antes ou depois de um asterisco (inclusive erros de
-  digitação comuns), sem telefone. "CONTABILIDADE NÃO UTILIZA" / "SOLICITAR CONTATO" vão para **Atendimento contábil**.
-- **Segmento:** duas primeiras palavras significativas do trecho do Nome Fantasia antes do asterisco; com o Nome
-  Fantasia vazio, o trecho da Razão Social depois do primeiro asterisco. Ignora (INATIVO), (CPF) e parênteses.
-  O antigo "Segmento" (coluna Ramo Atividade) chama-se **Ramo de atividade**.
+  digitação comuns), sem telefone. "CONTABILIDADE NÃO UTILIZA" / "SOLICITAR CONTATO" nunca viram nome de escritório.
+- **Ramo de atividade:** o único filtro de classificação por atividade (coluna Ramo Atividade da planilha). No
+  cadastro é uma lista suspensa com os valores já cadastrados, com "Outro (digitar)…" para um ramo novo.
 - **Região 1:** zona pelo mapeamento de bairros configurável (Configurações; inicial: distritos de São Paulo).
   "(Zona Leste)" escrito no bairro vale mais. Sem regra → pendente (nunca inventada). **Região 2:** o campo Bairro.
 - **Vendedor:** editável na ficha e em lote; preservado nas importações sem coluna de vendedor.

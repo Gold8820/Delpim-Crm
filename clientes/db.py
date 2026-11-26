@@ -218,8 +218,9 @@ _ADDITIONS = {
     },
     "clientes": {"observacoes": "TEXT", "dados_extras": "JSONB NOT NULL DEFAULT '{}'::jsonb",
                  # perfil comercial (clientes/perfil.py)
-                 "tipo_cadastro": "TEXT", "escritorio_contabil": "TEXT", "situacao_contabil": "TEXT",
-                 "segmento_nome": "TEXT", "regiao1": "TEXT", "regiao2": "TEXT",
+                 # (bancos já existentes podem ter as colunas antigas situacao_contabil e segmento_nome:
+                 #  não são mais usadas e foram mantidas para não apagar dados)
+                 "tipo_cadastro": "TEXT", "escritorio_contabil": "TEXT", "regiao1": "TEXT", "regiao2": "TEXT",
                  "perfil_auto": "JSONB NOT NULL DEFAULT '{}'::jsonb",
                  "perfil_manual": "JSONB NOT NULL DEFAULT '[]'::jsonb"},
     "contratos": {"observacoes": "TEXT", "dados_extras": "JSONB NOT NULL DEFAULT '{}'::jsonb"},

@@ -47,7 +47,7 @@ def meta():
         "mes_atual": date.today().strftime("%Y-%m"),
         "segmentos": repo.list_segments(db),
         "perfil": {"opcoes": repo.list_perfil_opcoes(db), "tipos": list(perfil.TIPOS),
-                   "situacoes_contabeis": list(perfil.SITUACOES_CONTABEIS), "rotulos": perfil.ROTULOS,
+                   "rotulos": perfil.ROTULOS,
                    "situacoes_contratuais": list(perfil.SITUACOES_CONTRATUAIS),
                    "pendencias": perfil.ROTULOS_PENDENCIA,
                    "nunca_classificados": db.execute(

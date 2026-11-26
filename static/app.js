@@ -108,7 +108,10 @@ async function loadMeta() {
   segSel.innerHTML = `<option value="">Todos</option>` + segmentos.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
   segSel.value = state.seg;
 
-  $("#dl-segments").innerHTML = segmentos.map((s) => `<option value="${esc(s)}">`).join("");
+  // Ramo de atividade no cadastro: lista suspensa com os valores já cadastrados
+  const OUTRO = "__outro__";
+  $("#c-segmento").innerHTML = `<option value="">—</option>` + segmentos.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("")
+    + `<option value="${OUTRO}">Outro (digitar)…</option>`;
   $("#c-estado").innerHTML = `<option value="">—</option>` +
     Object.keys(state.meta.ufs).map((uf) => `<option value="${uf}">${uf}</option>`).join("");
 
@@ -426,8 +429,9 @@ async function openClientForm(id = null) {
     try {
       const c = await api(`/api/clientes/${id}`);
       for (const el of form.elements) {
-        if (el.name && el.name in c && el.name !== "mes" && el.name !== "valor") el.value = c[el.name] ?? "";
+        if (el.name && el.name in c && el.name !== "mes" && el.name !== "valor" && el.name !== "segmento") el.value = c[el.name] ?? "";
       }
+      definirRamo(c.segmento);
       clientForm.payments = c.pagamentos;
       clientForm.contracts = c.contratos || [];
       clientForm.extras = c.dados_extras || {};
@@ -435,6 +439,7 @@ async function openClientForm(id = null) {
     } catch (err) { toast(err.message, "error"); return; }
   } else {
     defaultMonth = state.meta.mes_atual;
+    definirRamo("");
     if (window.perfilPreencher) window.perfilPreencher(null);
   }
   $("#c-mes").innerHTML = monthOptions(defaultMonth);
@@ -447,8 +452,30 @@ async function openClientForm(id = null) {
   $("#c-codigo").focus();
 }
 
+/* Ramo de atividade: lista suspensa com os valores já cadastrados; "Outro (digitar)…" abre um campo de texto. */
+function definirRamo(valor) {
+  const sel = $("#c-segmento"), novo = $("#c-segmento-novo");
+  const v = valor || "";
+  if (v && ![...sel.options].some((o) => o.value === v)) {
+    sel.querySelector('option[value="__outro__"]').insertAdjacentHTML("beforebegin", `<option value="${esc(v)}">${esc(v)}</option>`);
+  }
+  sel.value = v;
+  novo.value = "";
+  novo.hidden = true;
+}
+
+function ramoEscolhido() {
+  const sel = $("#c-segmento");
+  return sel.value === "__outro__" ? $("#c-segmento-novo").value.trim() : sel.value;
+}
+
 function wireClientForm() {
   const form = $("#form-client");
+  $("#c-segmento").addEventListener("change", (e) => {
+    const outro = e.target.value === "__outro__";
+    $("#c-segmento-novo").hidden = !outro;
+    if (outro) $("#c-segmento-novo").focus();
+  });
   $("#c-cnpj").addEventListener("input", (e) => { e.target.value = formatCnpj(e.target.value); });
   $("#c-cep").addEventListener("input", (e) => { e.target.value = formatCep(e.target.value); });
   $("#c-valor").addEventListener("input", updateClassPreview);
@@ -465,6 +492,7 @@ function wireClientForm() {
     const payload = Object.fromEntries(new FormData(form).entries());
     if (window.perfilEdicoes) payload.perfil = window.perfilEdicoes();
     payload.dados_extras = extrasEditados();
+    payload.segmento = ramoEscolhido();
     const btn = $("#client-save");
     btn.disabled = true;
     try {

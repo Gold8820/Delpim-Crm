@@ -22,6 +22,12 @@ Melhorar o módulo de importação SEM reconstruir o app, preservando cadastros/
 
 ## 4. ESTADO ATUAL
 
+### Rodada 14 — remoção de Atendimento contábil e de Segmento (fica só Ramo de atividade) — 368 testes
+- **Atendimento contábil (`situacao_contabil`)** removido da ficha, API (`/api/meta`, filtros, serialização), diagnóstico e regras de `perfil.py`. "NÃO UTILIZA"/"SOLICITAR CONTATO" continuam reconhecidos só para não virarem nome de escritório; agora contam como contabilidade pendente.
+- **Segmento (`segmento_nome`, duas palavras do nome fantasia)** removido do cálculo, ficha, filtros, pendências e diagnóstico. Fica **Ramo de atividade** (coluna `segmento`): filtro único e lista suspensa no cadastro (valores existentes + "Outro (digitar)…").
+- **Banco:** nenhuma alteração. As colunas `situacao_contabil` e `segmento_nome` dos bancos existentes ficam sem uso (nada é apagado); saíram de `db.py`/`supabase_cloudflare.sql` para instalações novas.
+- **Publicado:** só no Worker de validação. Produção intocada.
+
 ### Rodada 13 — reformulação visual (sem mudar regras) — 374 testes
 - **Arquivos:** `static/layout.css` (tokens, menu lateral, cabeçalho, indicadores, tabela adaptável/cartões, formulário em colunas, responsivo 1180/1024/760/420), `static/layout.js` (menu recolhível, seletor de colunas com `localStorage` só para preferência de exibição, ajuste automático de colunas por prioridade, painel de filtros com contador, indicadores via `/api/perfil/diagnostico`). `templates/index.html`: nova estrutura (topbar com `#sidebar-user`, `#kpis`, `.list-toolbar`, `#painel-filtros`, formulário `.form-cols`). `app.js`: `data-col`/`data-label` nas células, ganchos `aposTabela` e `carregarKpis`, título no cabeçalho, filtro de lista com resposta mais recente.
 - **Medições (1366×768):** listagem antes 1.915px de tabela em 1.093px (página 2.135px) → 1.093/1.093 com todas as colunas padrão; formulário antes 1.538px de altura em 600px → 695px em 618px. 1920×1080: todas as 11 colunas. Celular: cartões, menu lateral sobreposto, formulário em uma coluna, configurações sem rolagem lateral.

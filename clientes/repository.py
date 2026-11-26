@@ -115,7 +115,7 @@ def list_segments(db) -> list[str]:
 
 
 VAZIO = "__vazio__"    # valor do filtro "sem classificação"
-FILTROS_PERFIL = ("tipo_cadastro", "escritorio_contabil", "situacao_contabil", "segmento_nome", "regiao1",
+FILTROS_PERFIL = ("tipo_cadastro", "escritorio_contabil", "regiao1",
                   "regiao2", "vendedor")
 _TEM_CONTRATO = "EXISTS (SELECT 1 FROM contratos ct WHERE ct.cliente_id = c.id)"
 

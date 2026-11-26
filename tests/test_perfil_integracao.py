@@ -50,22 +50,22 @@ def test_importacao_classifica_e_relata_duvidas(client, consulta):
     assert feito_k["perfil"]["processados"] == 9
     c = por_doc(client)
     a = c[cnpj(1)]
-    assert (a["tipo_cadastro"], a["escritorio_contabil"], a["segmento_nome"], a["regiao1"], a["regiao2"],
-            a["situacao_contratual"]) == ("Cliente", "CONTABILIDADE DETECTA", "ADEGA PRONTO", "Zona Leste", "Penha",
-                                          "Contratado")
+    assert (a["tipo_cadastro"], a["escritorio_contabil"], a["regiao1"], a["regiao2"],
+            a["situacao_contratual"]) == ("Cliente", "CONTABILIDADE DETECTA", "Zona Leste", "Penha", "Contratado")
+    assert "situacao_contabil" not in a and "segmento_nome" not in a       # campos removidos não aparecem na API
     # salvo nos campos do banco (não só calculado na tela)
-    assert tuple(consulta("SELECT segmento_nome, escritorio_contabil, regiao1, perfil_auto->>'segmento_nome' FROM clientes "
-                          "WHERE cnpj = %s", (cnpj(1),))[0].values()) ==         ("ADEGA PRONTO", "CONTABILIDADE DETECTA", "Zona Leste", "ADEGA PRONTO")
+    assert tuple(consulta("SELECT escritorio_contabil, regiao1, perfil_auto->>'escritorio_contabil' FROM clientes "
+                          "WHERE cnpj = %s", (cnpj(1),))[0].values()) == ("CONTABILIDADE DETECTA", "Zona Leste", "CONTABILIDADE DETECTA")
     assert a["razao_social"].startswith("A M DO NASCIMENTO")        # o nome original não é alterado
     assert c[cnpj(2)]["tipo_cadastro"] == "Ex-cliente" and c[cnpj(2)]["razao_social"].startswith("(INATIVO)")
     assert c[cnpj(2)]["regiao2"] == "Parque da Mooca" and c[cnpj(2)]["situacao_contratual"] == "Contratado"
-    assert c[cnpj(3)]["tipo_cadastro"] == "Revenda" and c[cnpj(3)]["situacao_contabil"] == "Não utiliza"
+    assert c[cnpj(3)]["tipo_cadastro"] == "Revenda" and c[cnpj(3)]["escritorio_contabil"] is None
     m = c[cnpj(4)]
-    assert m["segmento_nome"] == "MERCADO MINI" and m["situacao_contabil"] == "Solicitar contato"
+    assert m["escritorio_contabil"] is None and m["segmento"] == "MERCADO"   # ramo de atividade da planilha
     assert m["regiao1"] is None and m["regiao2"] == "Cidade Jardim Cumbica"     # Guarulhos não mapeado: não inventa
     assert m["tipo_cadastro"] == "Cliente" and m["situacao_contratual"] == "Cliente sem contrato"
     assert c[cnpj(5)]["tipo_cadastro"] == "Contabilidade" and c[cnpj(5)]["escritorio_contabil"] is None
-    assert c[cnpj(6)]["tipo_cadastro"] == "Cliente" and c[cnpj(6)]["segmento_nome"] is None
+    assert c[cnpj(6)]["tipo_cadastro"] == "Cliente"
     assert c[cnpj(7)]["tipo_cadastro"] == "Cliente" and c[cnpj(7)]["situacao_contratual"] == "Cliente sem contrato"
     assert c[cnpj(9)]["regiao1"] == "Zona Leste" and c[cnpj(9)]["escritorio_contabil"] is None
     duvidas = feito_k["perfil"]["duvidas"]
@@ -80,9 +80,9 @@ def test_filtros_combinados(client):
     assert docs(lista(client, contrato="nao")) == sorted(cnpj(n) for n in (3, 4, 6, 7, 8, 9))
     assert docs(lista(client, tipo_cadastro="Ex-cliente", escritorio_contabil="contabilidade batista")) == \
         sorted([cnpj(2), cnpj(8)])
-    assert docs(lista(client, segmento_nome="ADEGA PRONTO")) == [cnpj(1)]
+    assert docs(lista(client, segmento="ADEGA")) == [cnpj(1)]                 # Ramo de atividade
+    assert docs(lista(client, segmento="mercado", regiao1="Zona Leste")) == []      # combinado com outro filtro
     assert docs(lista(client, regiao2="Penha", contrato="sim")) == sorted([cnpj(1), cnpj(5)])
-    assert docs(lista(client, segmento_nome="__vazio__")) == sorted([cnpj(5), cnpj(6)])
     assert docs(lista(client, pendente="regiao1")) == sorted([cnpj(4), cnpj(6)])   # Guarulhos e Vila Nhocune sem regra
     assert cnpj(9) in docs(lista(client, pendente="contabilidade"))
     meta = client.get("/api/meta").json["perfil"]
@@ -146,10 +146,10 @@ def test_diagnostico_e_pendentes(client):
     campos = {c["campo"]: (c["identificados"], c["pendentes"]) for c in d["campos"]}
     assert d["total"] == 9 and d["nunca_classificados"] == 0
     assert campos["tipo_cadastro"] == (9, 0)
-    assert campos["segmento_nome"] == (8, 1)            # pessoa física sem fantasia (6); 5 é escritório contábil
+    assert "segmento_nome" not in campos
     assert campos["regiao1"] == (7, 2)                  # Guarulhos e Vila Nhocune sem regra
     assert campos["regiao2"] == (9, 0)
-    assert campos["contabilidade"] == (6, 3)            # 6, 7 e 9 sem escritório; 5 é o próprio escritório
+    assert campos["contabilidade"] == (4, 5)            # 3, 4, 6, 7 e 9 sem escritório; 5 é o próprio escritório
     assert d["situacao_contratual"] == {"Contratado": 3, "Cliente sem contrato": 6}
     assert d["tipos"]["Ex-cliente"] == 3 and "Lead" not in d["tipos"]
     csv = client.get("/api/perfil/pendentes.csv")
@@ -169,11 +169,10 @@ def test_reimportacao_sem_alteracoes_preenche_clientes_antigos(client, consulta)
     """Situação real: clientes importados antes dos campos novos (colunas vazias) e reimportação idêntica."""
     importar(client)
     consulta("UPDATE clientes SET perfil_auto = '{}'::jsonb, tipo_cadastro = NULL, escritorio_contabil = NULL, "
-             "situacao_contabil = NULL, segmento_nome = NULL, regiao1 = NULL, regiao2 = NULL")
+             "regiao1 = NULL, regiao2 = NULL")
     _, _, feito = etapa(client, "clientes", CAB_CLIENTES, linhas_clientes())
     assert feito["clientes_novos"] == 0 and feito["clientes_atualizados"] == 0      # nada mudou no cadastro...
     assert feito["perfil"]["diagnostico"]["nunca_classificados"] == 0               # ...mas o perfil foi preenchido
     c = por_doc(client)[cnpj(1)]
-    assert (c["segmento_nome"], c["escritorio_contabil"], c["regiao1"], c["regiao2"]) == \
-        ("ADEGA PRONTO", "CONTABILIDADE DETECTA", "Zona Leste", "Penha")
-    assert len(lista(client, segmento_nome="ADEGA PRONTO", regiao1="Zona Leste")["clientes"]) == 1
+    assert (c["escritorio_contabil"], c["regiao1"], c["regiao2"]) == ("CONTABILIDADE DETECTA", "Zona Leste", "Penha")
+    assert len(lista(client, segmento="ADEGA", regiao1="Zona Leste")["clientes"]) == 1

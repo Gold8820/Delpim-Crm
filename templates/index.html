@@ -230,9 +230,7 @@
               <div class="form-grid">
                 <div class="field"><label for="pf-tipo_cadastro">Tipo de cadastro</label><select id="pf-tipo_cadastro" data-perfil="tipo_cadastro"></select><small class="dica" data-pf-dica="tipo_cadastro"></small><small class="err"></small></div>
                 <div class="field"><label>Situação contratual</label><div class="readonly" id="pf-contratual">—</div><small class="dica">pelos contratos relacionados</small></div>
-                <div class="field"><label for="pf-segmento_nome">Segmento</label><input id="pf-segmento_nome" data-perfil="segmento_nome" maxlength="120" list="dl-pf-segmento"><datalist id="dl-pf-segmento"></datalist><small class="dica" data-pf-dica="segmento_nome"></small><small class="err"></small></div>
                 <div class="field w2"><label for="pf-escritorio_contabil">Escritório de contabilidade</label><input id="pf-escritorio_contabil" data-perfil="escritorio_contabil" maxlength="120" list="dl-pf-escritorio"><datalist id="dl-pf-escritorio"></datalist><small class="dica" data-pf-dica="escritorio_contabil"></small><small class="err"></small></div>
-                <div class="field"><label for="pf-situacao_contabil">Atendimento contábil</label><select id="pf-situacao_contabil" data-perfil="situacao_contabil"></select><small class="dica" data-pf-dica="situacao_contabil"></small><small class="err"></small></div>
                 <div class="field"><label for="pf-regiao1">Região 1</label><input id="pf-regiao1" data-perfil="regiao1" maxlength="120" list="dl-pf-regiao1" placeholder="Zona Leste"><datalist id="dl-pf-regiao1"></datalist><small class="dica" data-pf-dica="regiao1"></small><small class="err"></small></div>
                 <div class="field w2"><label for="pf-regiao2">Região 2</label><input id="pf-regiao2" data-perfil="regiao2" maxlength="120" list="dl-pf-regiao2" placeholder="Bairro"><datalist id="dl-pf-regiao2"></datalist><small class="dica" data-pf-dica="regiao2"></small><small class="err"></small></div>
               </div>
@@ -242,7 +240,7 @@
               <legend>Informações comerciais</legend>
               <div class="form-grid">
                 <div class="field w2"><label for="c-vendedor">Vendedor responsável</label><input id="c-vendedor" name="vendedor" maxlength="100" list="dl-vendedores"><datalist id="dl-vendedores"></datalist><small class="err"></small></div>
-                <div class="field"><label for="c-segmento">Ramo de atividade</label><input id="c-segmento" name="segmento" maxlength="100" list="dl-segments"><datalist id="dl-segments"></datalist><small class="err"></small></div>
+                <div class="field"><label for="c-segmento">Ramo de atividade</label><select id="c-segmento" name="segmento"><option value="">—</option></select><input id="c-segmento-novo" class="ramo-novo" maxlength="100" placeholder="Digite o novo ramo" aria-label="Novo ramo de atividade" hidden><small class="err"></small></div>
                 <div class="field"><label for="c-mes">Mês de referência</label><select id="c-mes" name="mes"></select><small class="err"></small></div>
                 <div class="field"><label for="c-valor">Valor pago no mês</label><div class="money"><span>R$</span><input id="c-valor" name="valor" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><small class="err"></small></div>
                 <div class="field"><label>Classificação</label><div class="class-preview" id="class-preview"><span class="muted">Informe o valor</span></div></div>

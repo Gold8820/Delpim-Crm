@@ -3,11 +3,11 @@
 Campos (colunas da tabela clientes):
   tipo_cadastro        Ex-cliente ((INATIVO)), Revenda, Fornecedor, Contabilidade (explícitos no nome) ou Cliente
   escritorio_contabil  escritório de contabilidade VINCULADO ao cliente (não é a categoria do cliente)
-  situacao_contabil    "Não utiliza" / "Solicitar contato" (CONTABILIDADE NAO UTILIZA, SOLICITAR CONTATO)
-  segmento_nome        duas primeiras palavras significativas do nome fantasia (ADEGA PRONTO SOCORRO → ADEGA PRONTO)
   regiao1              zona (Zona Leste...), pelo mapeamento de bairros configurável
   regiao2              o campo Bairro do cadastro, como está
 A situação contratual (Contratado / Cliente sem contrato) não é guardada: vem sempre dos contratos relacionados.
+Expressões como "CONTABILIDADE NÃO UTILIZA" e "SOLICITAR CONTATO" são reconhecidas só para não virarem nome de
+escritório. O ramo de atividade é o campo `segmento` do cadastro (coluna Ramo Atividade da planilha).
 O vendedor responsável é o campo `vendedor` do cadastro (importado quando a planilha traz a coluna).
 
 Padrão dos nomes nas planilhas reais: "RAZÃO SOCIAL * NOME FANTASIA * CONTABILIDADE", com prefixos entre
@@ -26,13 +26,10 @@ import unicodedata
 
 TIPOS = ("Cliente", "Ex-cliente", "Revenda", "Fornecedor", "Contabilidade")
 SITUACOES_CONTRATUAIS = ("Contratado", "Cliente sem contrato")
-SITUACOES_CONTABEIS = ("Não utiliza", "Solicitar contato")
-CAMPOS = ("tipo_cadastro", "escritorio_contabil", "situacao_contabil", "segmento_nome", "regiao1", "regiao2")
+CAMPOS = ("tipo_cadastro", "escritorio_contabil", "regiao1", "regiao2")
 ROTULOS = {
     "tipo_cadastro": "Tipo de cadastro",
     "escritorio_contabil": "Escritório de contabilidade",
-    "situacao_contabil": "Atendimento contábil",
-    "segmento_nome": "Segmento",
     "regiao1": "Região 1",
     "regiao2": "Região 2",
 }
@@ -63,8 +60,6 @@ _SOLICITAR = re.compile(r"\bSOLICITAR\b")
 _PALAVRAS_CONTABEIS = {"CONTABILIDADE", "CONTABIL", "CONTADOR", "CONTADORA", "ESCRITORIO", "DE", "ORGANIZACAO",
                        "ASSESSORIA", "E", "N", "A", "NA"}
 _TELEFONE = re.compile(r"\(?\b\d{2}\)?\s*\d{4,5}\s*-?\s*\d{4}\b-?|\b\d{4,5}-\d{4}\b-?")
-_PALAVRAS_VAZIAS = {"DE", "DA", "DO", "DAS", "DOS", "E", "EM", "LTDA", "ME", "EPP", "EIRELI", "SA", "S/A", "S.A",
-                    "S.A.", "S/S", "INATIVO", "INATIVA"}
 
 
 def _sem_parenteses(seg: str) -> str:
@@ -115,20 +110,6 @@ def _nome_escritorio(texto: str) -> str | None:
     resto = [w.replace(".", "") for w in re.findall(r"[A-Z0-9][A-Z0-9.]*", s)]   # "R.A", "W.B": iniciais
     resto = [w for w in resto if w not in _PALAVRAS_CONTABEIS and not w.isdigit()]
     return s[:MAX_LEN] if any(re.search(r"[A-Z].*[A-Z]", w) for w in resto) else None
-
-
-def _segmento(fantasia: str | None) -> str | None:
-    if not fantasia:
-        return None
-    palavras = []
-    for w in re.findall(r"[A-Z0-9][A-Z0-9./']*", fantasia):
-        w = w.strip(".'")
-        if w in _PALAVRAS_VAZIAS or len(w) < 2 or not re.search(r"[A-Z]", w):
-            continue
-        palavras.append(w)
-        if len(palavras) == 2:
-            break
-    return " ".join(palavras) or None
 
 
 # --------------------------------------------------------------------------- regiões
@@ -268,8 +249,9 @@ def identificar(razao, fantasia, *, bairro=None, cidade=None, ramo=None, tem_con
     else:
         tipo = "Cliente"
 
-    # --- escritório e situação do atendimento contábil (não para o próprio escritório contábil)
-    escritorio = situacao = None
+    # --- escritório de contabilidade (não para o próprio escritório contábil). "NÃO UTILIZA" / "SOLICITAR CONTATO"
+    #     são partes de situação: nunca viram nome de escritório.
+    escritorio = None
     if tipo != "Contabilidade" and not contabilidade:
         def escritorios(analise):
             nomes, sem_nome = {}, False
@@ -294,35 +276,17 @@ def identificar(razao, fantasia, *, bairro=None, cidade=None, ramo=None, tem_con
             escritorio = next(iter(candidatos.values()))
         elif vazio_fan or vazio_raz:
             duvidas.append(("escritorio_contabil", "contabilidade citada sem o nome do escritório."))
-        tipos_status = {p["tipo"] for p in fan["partes"] + raz["partes"]} & {"nao_utiliza", "solicitar"}
-        if len(tipos_status) > 1:
-            duvidas.append(("situacao_contabil", "o nome diz ao mesmo tempo NÃO UTILIZA e SOLICITAR CONTATO."))
-        elif tipos_status:
-            situacao = "Não utiliza" if "nao_utiliza" in tipos_status else "Solicitar contato"
         if escritorio is None and not candidatos and not (vazio_fan or vazio_raz):
             soltas = [p["texto"] for p in fan["partes"] + raz["partes"]
                       if p["tipo"] is None and _CONTAB_PALAVRA.search(p["texto"])]
             if soltas:
                 duvidas.append(("escritorio_contabil", f"menção a contabilidade fora do padrão (“{soltas[0]}”)."))
 
-    # --- segmento: duas primeiras palavras significativas do nome fantasia (trecho antes do asterisco); com o
-    #     Nome Fantasia vazio, o trecho da Razão Social depois do primeiro asterisco
-    segmento = None
-    if not contabilidade:
-        nome_fantasia = None
-        if fan["partes"]:
-            nome_fantasia = next((p["texto"] for p in fan["partes"] if p["tipo"] is None), None)
-        elif len(raz["partes"]) > 1:
-            depois = [p["texto"] for p in raz["partes"][1:] if p["tipo"] is None]
-            nome_fantasia = depois[0] if depois else (raz["partes"][0]["texto"] if raz["partes"][0]["tipo"] is None else None)
-        segmento = _segmento(nome_fantasia)
-
     regiao1, regiao2, duvida_regiao = identificar_regiao(bairro, cidade, mapa_compilado or _compilar_mapa(MAPA_PADRAO))
     if duvida_regiao:
         duvidas.append(("regiao1", duvida_regiao))
 
-    valores = {"tipo_cadastro": tipo, "escritorio_contabil": escritorio, "situacao_contabil": situacao,
-               "segmento_nome": segmento, "regiao1": regiao1, "regiao2": regiao2}
+    valores = {"tipo_cadastro": tipo, "escritorio_contabil": escritorio, "regiao1": regiao1, "regiao2": regiao2}
     return valores, duvidas
 
 
@@ -416,13 +380,12 @@ def reclassificar(db, ids: list[int] | None = None) -> dict:
 # "Pendente de identificação": campo que a classificação automática não conseguiu preencher.
 PENDENCIAS = {
     "tipo_cadastro": "c.tipo_cadastro IS NULL",
-    "segmento_nome": "c.segmento_nome IS NULL AND c.tipo_cadastro IS DISTINCT FROM 'Contabilidade'",
-    "contabilidade": "c.escritorio_contabil IS NULL AND c.situacao_contabil IS NULL "
+    "contabilidade": "c.escritorio_contabil IS NULL "
                      "AND c.tipo_cadastro IS DISTINCT FROM 'Contabilidade'",   # o próprio escritório não fica pendente
     "regiao1": "c.regiao1 IS NULL",
     "regiao2": "c.regiao2 IS NULL",
 }
-ROTULOS_PENDENCIA = {"tipo_cadastro": "Tipo de cliente", "segmento_nome": "Segmento",
+ROTULOS_PENDENCIA = {"tipo_cadastro": "Tipo de cliente",
                      "contabilidade": "Contabilidade", "regiao1": "Região 1", "regiao2": "Região 2 (bairro)"}
 
 
@@ -434,7 +397,6 @@ def diagnostico(db) -> dict:
         "COUNT(*) FILTER (WHERE c.perfil_auto = '{}'::jsonb) AS nunca_classificados, "
         "COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM contratos ct WHERE ct.cliente_id = c.id)) AS contratados, "
         "COUNT(*) FILTER (WHERE c.escritorio_contabil IS NOT NULL) AS com_escritorio, "
-        "COUNT(*) FILTER (WHERE c.situacao_contabil IS NOT NULL) AS com_situacao_contabil, "
         "COUNT(*) FILTER (WHERE " + " OR ".join(f"({c})" for c in PENDENCIAS.values()) + ") AS com_pendencia, "
         f"{pend} FROM clientes c").fetchone()
     total = r["total"]
@@ -447,7 +409,7 @@ def diagnostico(db) -> dict:
         "com_pendencia": r["com_pendencia"],
         "campos": [{"campo": k, "rotulo": ROTULOS_PENDENCIA[k], "identificados": identificados[k],
                     "pendentes": r[f"p_{k}"]} for k in PENDENCIAS],
-        "contabilidade": {"escritorio": r["com_escritorio"], "situacao": r["com_situacao_contabil"]},
+        "contabilidade": {"escritorio": r["com_escritorio"]},
         "situacao_contratual": {"Contratado": r["contratados"], "Cliente sem contrato": total - r["contratados"]},
         "tipos": tipos,
         # bairros mais frequentes sem regra de Região 1: o que vale a pena incluir no mapeamento
@@ -478,8 +440,6 @@ def limpar_valor(campo: str, valor) -> tuple[str | None, str | None]:
         return None, None
     if campo == "tipo_cadastro" and texto not in TIPOS:
         return None, "Tipo de cadastro inválido."
-    if campo == "situacao_contabil" and texto not in SITUACOES_CONTABEIS:
-        return None, "Situação do atendimento contábil inválida."
     if len(texto) > MAX_LEN:
         return None, f"Use até {MAX_LEN} caracteres."
     return texto, None

@@ -112,8 +112,7 @@ END $$;
 -- 6b) Perfil comercial do cliente (classificação automática, editável). Só adiciona colunas.
 ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS tipo_cadastro TEXT;
 ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS escritorio_contabil TEXT;
-ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS situacao_contabil TEXT;
-ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS segmento_nome TEXT;
+-- (situacao_contabil e segmento_nome, criadas por versões anteriores, não são mais usadas; ficam no banco sem uso)
 ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS regiao1 TEXT;
 ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS regiao2 TEXT;
 ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS perfil_auto JSONB NOT NULL DEFAULT '{}'::jsonb;

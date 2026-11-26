@@ -35,7 +35,6 @@ def test_revenda_entre_parenteses_nao_e_revenda():
     v, _ = ident("TEREZINHA GONCALVES DE ASSIS * ACOUGUE DIEGO (REVENDA JORGE JAPONES)",
                  "ACOUGUE CENTER CARNES DIEGO * CONTABILIDADE REMANSO*", tem_contrato=True)
     assert v["tipo_cadastro"] == "Cliente" and v["escritorio_contabil"] == "CONTABILIDADE REMANSO"
-    assert v["segmento_nome"] == "ACOUGUE CENTER"
 
 
 def test_contabilidade_vinculada_nao_torna_o_cliente_contabilidade():
@@ -58,7 +57,6 @@ def test_contabilidade_no_inicio_mas_com_outro_negocio_nao_e_contabilidade():
     v, _ = ident("CONTABILIDADE ORGPENHA * MERCADO SILVA - ANT. MERCADO MARLI",
                  "CONTABILIDADE ORGPENHA * MERCADO SILVA - ANT. MERCADO MARLI")
     assert v["tipo_cadastro"] == "Cliente" and v["escritorio_contabil"] == "CONTABILIDADE ORGPENHA"
-    assert v["segmento_nome"] == "MERCADO SILVA"
 
 
 def test_fornecedor():
@@ -105,50 +103,32 @@ def test_extrai_escritorio(razao, fantasia, esperado):
     assert v["escritorio_contabil"] == esperado and not d
 
 
-@pytest.mark.parametrize("razao,fantasia,situacao", [
-    ("(INATIVO) HORTI FRUTI DA FAMILIA * CONTABILIDADE SOLICITAR CONTATO", None, "Solicitar contato"),
-    ("MERCADO MINI PRECO (NORDESTE LJ2) * CONTABILIDADE SOLICITAR CONTATO", None, "Solicitar contato"),
-    ("REVENDA JOSIVALDO DOS SANTOS * CONTABILIDADE NAO UTILIZA", None, "Não utiliza"),
-    ("CONSUMIDOR CONTABILIDADE NAO UTILIZA", None, "Não utiliza"),
-    ("X * ADEGA 29", "(INATIVO) ADEGA 29 *SOLICITAR CONTADOR*", "Solicitar contato"),
-    ("X * HORTIFRUTI BOM SABOR", "(INATIVO) HORTIFRUTI BOM SABOR - NÃO TEM CONTABILIDADE", "Não utiliza"),
+@pytest.mark.parametrize("razao,fantasia", [
+    ("(INATIVO) HORTI FRUTI DA FAMILIA * CONTABILIDADE SOLICITAR CONTATO", None),
+    ("MERCADO MINI PRECO (NORDESTE LJ2) * CONTABILIDADE SOLICITAR CONTATO", None),
+    ("REVENDA JOSIVALDO DOS SANTOS * CONTABILIDADE NAO UTILIZA", None),
+    ("CONSUMIDOR CONTABILIDADE NAO UTILIZA", None),
+    ("X * ADEGA 29", "(INATIVO) ADEGA 29 *SOLICITAR CONTADOR*"),
+    ("X * HORTIFRUTI BOM SABOR", "(INATIVO) HORTIFRUTI BOM SABOR - NÃO TEM CONTABILIDADE"),
 ])
-def test_situacao_contabil_nao_vira_nome_de_escritorio(razao, fantasia, situacao):
+def test_nao_utiliza_e_solicitar_contato_nao_viram_nome_de_escritorio(razao, fantasia):
     v, d = ident(razao, fantasia)
-    assert v["situacao_contabil"] == situacao and v["escritorio_contabil"] is None and not d
+    assert v["escritorio_contabil"] is None and not d
+
+
+def test_campos_removidos_nao_existem_mais():
+    """Atendimento contábil e Segmento (duas palavras do nome) foram removidos do perfil."""
+    assert "situacao_contabil" not in perfil.CAMPOS and "segmento_nome" not in perfil.CAMPOS
+    v, _ = ident("A M DO NASCIMENTO ADEGA * ADEGA PRONTO SOCORRO LOJA 1",
+                 "ADEGA PRONTO SOCORRO LOJA 1 * CONTABILIDADE SOLICITAR CONTATO")
+    assert set(v) == {"tipo_cadastro", "escritorio_contabil", "regiao1", "regiao2"}
 
 
 def test_contabilidade_fora_do_padrao_vai_para_inconsistencias():
     v, d = ident("(INATIVO) ROUPA DB KIDS MODA INFANTIL CONTABILIDADE 11 97326-5156* ROUPA DB KIDS MODA INFANTIL")
     assert v["escritorio_contabil"] is None and d[0][0] == "escritorio_contabil"
-    assert v["segmento_nome"] == "ROUPA DB"
     v, d = ident("X * MERCADO SMART SILVA", "MERCADO SMART SILVA * CONTABILIDADE")
     assert v["escritorio_contabil"] is None and "sem o nome" in d[0][1]
-
-
-# --------------------------------------------------------------------------- segmento
-
-@pytest.mark.parametrize("razao,fantasia,esperado", [
-    ("A M DO NASCIMENTO ADEGA * ADEGA PRONTO SOCORRO LOJA 1", "ADEGA PRONTO SOCORRO LOJA 1 * CONTABILIDADE DETECTA",
-     "ADEGA PRONTO"),
-    ("CENTER CARNES GENESIS LTDA * ACOUGUE CENTER CARNES BOI NATIVO",
-     "ACOUGUE CENTER CARNES BOI NATIVO * CONTABILIDADE ALVORADA", "ACOUGUE CENTER"),
-    ("(INATIVO) HORTIFRUTI ALEXANDRINO LUCIANA MARCOS FREIRE * CONTABILIDADE BATISTA", None, "HORTIFRUTI ALEXANDRINO"),
-    ("ROUPA PHORTION MATRIZ * CONTABILIDADE AAS.ASSESSORIA CONTABIL", None, "ROUPA PHORTION"),
-    ("MERCADO MINI PRECO (NORDESTE LJ2) * CONTABILIDADE SOLICITAR CONTATO", None, "MERCADO MINI"),
-    ("(INATIVO) HENRIQUE SILVA CANTUARIA EIRELI * ACOUGUE FAGUNDES", None, "ACOUGUE FAGUNDES"),   # após o 1º asterisco
-    ("(CPF )BICICLETARIA CICLO BIKE 2* CONTABILIDADE NOGUEIRA", None, "BICICLETARIA CICLO"),    # sem o prefixo (CPF)
-    ("REVENDA ALESSANDRO * REVENDA CONTABILIDADE NAO UTILIZA", None, "REVENDA ALESSANDRO"),
-    ("CENTRAL DE CARNES LESTEGOL EIRELI - ME *ACOUGUE  LESTE GOL", "ACOUGUE  LESTE GOL", "ACOUGUE LESTE"),
-    ("X * ADEGA E TABACARIA RV", "ADEGA E TABACARIA RV * CONTABILIDADE OPENPRIMO", "ADEGA TABACARIA"),
-    ("X * MERCADO VILA NOVA", "(REVENDA DIOGO) MERCADO DO BAIRRO LOJA 1(REVENDA DIOGO) *SOLICITAR CONTATO", "MERCADO BAIRRO"),
-])
-def test_segmento_duas_palavras_do_nome_fantasia(razao, fantasia, esperado):
-    assert campo(razao, fantasia, "segmento_nome") == esperado
-
-
-def test_sem_nome_fantasia_nao_inventa_segmento():
-    assert campo("DIOGO DA SILVA ALMEIDA COSTA", None, "segmento_nome") is None
 
 
 # --------------------------------------------------------------------------- regiões

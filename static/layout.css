@@ -286,3 +286,5 @@ dialog.modal { border-radius: 12px; max-height: calc(100vh - 32px); width: calc(
   .form-grid .w2 { grid-column: auto; }
   .filter-panel { grid-template-columns: minmax(0, 1fr); }
 }
+
+.ramo-novo { margin-top: 6px; }

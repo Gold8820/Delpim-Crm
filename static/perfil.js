@@ -6,11 +6,11 @@
   const VAZIO = "__vazio__";
   const FILTROS = [
     ["tipo_cadastro", "Tipo de cadastro"], ["contrato", "Situação contratual"],
-    ["escritorio_contabil", "Escritório de contabilidade"], ["segmento_nome", "Segmento"],
+    ["escritorio_contabil", "Escritório de contabilidade"],
     ["regiao1", "Região 1"], ["regiao2", "Região 2"], ["vendedor", "Vendedor responsável"],
     ["pendente", "Pendentes de identificação"],
   ];
-  const CAMPOS = ["tipo_cadastro", "escritorio_contabil", "situacao_contabil", "segmento_nome", "regiao1", "regiao2"];
+  const CAMPOS = ["tipo_cadastro", "escritorio_contabil", "regiao1", "regiao2"];
   const ficha = { original: {}, manual: [] };
   state.pf = {};
 
@@ -42,10 +42,9 @@
       <button type="button" class="btn btn-sm btn-primary" id="pf-classificar">Classificar agora</button>` : "";
     // listas de sugestões da ficha
     const dl = (id, campo) => { $(id).innerHTML = (meta().opcoes[campo] || []).map((v) => `<option value="${esc(v)}">`).join(""); };
-    dl("#dl-pf-escritorio", "escritorio_contabil"); dl("#dl-pf-segmento", "segmento_nome");
+    dl("#dl-pf-escritorio", "escritorio_contabil");
     dl("#dl-pf-regiao1", "regiao1"); dl("#dl-pf-regiao2", "regiao2"); dl("#dl-vendedores", "vendedor");
     $("#pf-tipo_cadastro").innerHTML = opt("", "— Sem classificação") + meta().tipos.map((t) => opt(t, t)).join("");
-    $("#pf-situacao_contabil").innerHTML = opt("", "—") + meta().situacoes_contabeis.map((t) => opt(t, t)).join("");
   }
 
   function filtrosAtuais() {
@@ -136,8 +135,7 @@
     return `<div class="diag"><table class="diag-tabela"><thead><tr><th>Campo</th><th class="num">Identificados</th><th class="num">Pendentes</th></tr></thead>
       <tbody>${linhas}</tbody></table>
       <p class="muted">${n(d.total)} cliente(s). Situação contratual: <b>${n(d.situacao_contratual.Contratado)}</b> contratado(s),
-        <b>${n(d.situacao_contratual["Cliente sem contrato"])}</b> sem contrato. Contabilidade: ${n(d.contabilidade.escritorio)} com escritório,
-        ${n(d.contabilidade.situacao)} com situação do atendimento (não utiliza / solicitar contato).
+        <b>${n(d.situacao_contratual["Cliente sem contrato"])}</b> sem contrato. Contabilidade: ${n(d.contabilidade.escritorio)} com escritório.
         ${d.nunca_classificados ? `<b>${n(d.nunca_classificados)} ainda não classificado(s).</b>` : ""}</p>
       <div class="pills">${tipos}</div>
       ${(d.bairros_sem_regiao || []).length ? `<details><summary>Bairros mais frequentes sem regra de Região 1</summary>
